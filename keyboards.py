@@ -1,0 +1,83 @@
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+
+def main_menu_kb(is_connected: bool) -> InlineKeyboardMarkup:
+    connect_text = "✅ Аккаунт подключён" if is_connected else "🔗 Подключить аккаунт"
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=connect_text, callback_data="connect_account")],
+        [InlineKeyboardButton(text="🚀 Начать парсинг", callback_data="start_parsing")],
+        [InlineKeyboardButton(text="📋 Результаты парсинга", callback_data="show_results")],
+    ])
+
+
+def channel_select_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📋 Выбрать из моих каналов", callback_data="channel_from_list")],
+        [InlineKeyboardButton(text="🔗 Ввести ссылку", callback_data="channel_by_link")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_main")],
+    ])
+
+
+def channels_list_kb(channels: list) -> InlineKeyboardMarkup:
+    buttons = []
+    for title, cid in channels:
+        short = title[:30] + "…" if len(title) > 30 else title
+        buttons.append([InlineKeyboardButton(text=short, callback_data=f"pick_channel:{cid}")])
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="start_parsing")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def topics_list_kb(topics: list, channel: str) -> InlineKeyboardMarkup:
+    """topics = list of (id, title)"""
+    buttons = []
+    for tid, title in topics:
+        short = title[:30] + "…" if len(title) > 30 else title
+        buttons.append([InlineKeyboardButton(
+            text=f"💬 {short}",
+            callback_data=f"pick_topic:{tid}"
+        )])
+    buttons.append([InlineKeyboardButton(text="📥 Все темы сразу", callback_data="pick_topic:all")])
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="start_parsing")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def parse_mode_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📥 Все посты", callback_data="mode_all")],
+        [InlineKeyboardButton(text="🔢 Указать количество постов", callback_data="mode_count")],
+        [InlineKeyboardButton(text="📅 Указать диапазон дат", callback_data="mode_dates")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_main")],
+    ])
+
+
+def confirm_parse_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="▶️ Запустить", callback_data="run_parser")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_main")],
+    ])
+
+
+def running_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⏳ В работе...", callback_data="noop")],
+    ])
+
+
+def done_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Завершено", callback_data="noop")],
+        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_main")],
+    ])
+
+
+def cancel_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="back_main")],
+    ])
+
+
+def disconnect_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔌 Отключить аккаунт", callback_data="disconnect_account")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_main")],
+    ])
