@@ -7,6 +7,7 @@ def main_menu_kb(is_connected: bool) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=connect_text, callback_data="connect_account")],
         [InlineKeyboardButton(text="🚀 Начать парсинг", callback_data="start_parsing")],
         [InlineKeyboardButton(text="📋 Результаты парсинга", callback_data="show_results")],
+        [InlineKeyboardButton(text="📥 Загрузить базу", callback_data="upload_base")],
     ])
 
 
@@ -28,14 +29,10 @@ def channels_list_kb(channels: list) -> InlineKeyboardMarkup:
 
 
 def topics_list_kb(topics: list, channel: str) -> InlineKeyboardMarkup:
-    """topics = list of (id, title)"""
     buttons = []
     for tid, title in topics:
         short = title[:30] + "…" if len(title) > 30 else title
-        buttons.append([InlineKeyboardButton(
-            text=f"💬 {short}",
-            callback_data=f"pick_topic:{tid}"
-        )])
+        buttons.append([InlineKeyboardButton(text=f"💬 {short}", callback_data=f"pick_topic:{tid}")])
     buttons.append([InlineKeyboardButton(text="📥 Все темы сразу", callback_data="pick_topic:all")])
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="start_parsing")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
