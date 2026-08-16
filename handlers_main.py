@@ -465,3 +465,93 @@ async def run_parser(call: CallbackQuery, state: FSMContext):
             f"❌ <b>Ошибка:</b>\n<code>{e}</code>",
             parse_mode="HTML", reply_markup=done_kb(),
         )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  ЗАГРУЗКА БАЗЫ ИЗ TXT ФАЙЛА
+# ═══════════════════════════════════════════════════════════════════════════════
+
+from aiogram.fsm.state import State, StatesGroup as SG
+
+class UploadStates(SG):
+    waiting_file = State()
+
+
+@router.callback_query(F.data == "upload_base")
+async def upload_base(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return await call.answer()
+    await state.set_state(UploadStates.waiting_file)
+    await call.message.edit_text(
+        "📥 <b>Загрузка базы</b>\n\n"
+        "Отправьте <b>txt файл</b> с никнеймами — по одному на строку.\n\n"
+        "Формат:\n"
+        "<code>@username1\n@username2\nusername3</code>\n\n"
+        "<i>@ в начале необязателен — бот добавит сам.</i>",
+        parse_mode="HTML",
+        reply_markup=cancel_kb(),
+    )
+
+
+@router.message(UploadStates.waiting_file, F.document)
+async def got_base_file(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+
+    doc = message.document
+    if not doc.file_name.endswith(".txt"):
+        return await message.answer("❌ Нужен файл формата <b>.txt</b>", parse_mode="HTML")
+
+    msg = await message.answer("⏳ Читаю файл...")
+
+    try:
+        # Download file bytes
+        file = await message.bot.get_file(doc.file_id)
+        downloaded = await message.bot.download_file(file.file_path)
+        content = downloaded.read().decode("utf-8", errors="ignore")
+
+        # Parse usernames
+        lines = content.splitlines()
+        usernames = []
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            if not line.startswith("@"):
+                line = "@" + line
+            usernames.append(line.lower())
+
+        if not usernames:
+            await msg.edit_text("❌ Файл пуст или не содержит никнеймов.")
+            return
+
+        # Add to DB
+        from database import add_users
+        new_users = await add_users(usernames)
+        total = await get_users_count()
+
+        await state.clear()
+        await msg.edit_text(
+            f"✅ <b>База загружена</b>\n\n"
+            f"В файле: {len(usernames)}\n"
+            f"Новых добавлено: <b>{len(new_users)}</b>\n"
+            f"Уже были в базе: {len(usernames) - len(new_users)}\n"
+            f"Всего в базе: {total}",
+            parse_mode="HTML",
+            reply_markup=main_menu_kb(ub.is_connected()),
+        )
+
+    except Exception as e:
+        await msg.edit_text(
+            f"❌ Ошибка при чтении файла:\n<code>{e}</code>",
+            parse_mode="HTML",
+            reply_markup=cancel_kb(),
+        )
+
+
+@router.message(UploadStates.waiting_file)
+async def upload_wrong_type(message: Message):
+    await message.answer(
+        "❌ Нужен именно <b>txt файл</b>. Отправьте файл, а не текст.",
+        parse_mode="HTML",
+    )
