@@ -6,12 +6,12 @@ from aiogram.fsm.context import FSMContext
 from aiogram.filters import CommandStart
 
 from config import ADMIN_IDS
-from database import get_all_users, get_users_count, add_users, get_session_info
-from states import AuthStates, ParserStates
+from database import get_all_users, get_users_count, add_users
+from states import ParserStates
 from keyboards import (
     main_menu_kb, channel_select_kb, channels_list_kb, topics_list_kb,
     parse_mode_kb, confirm_parse_kb,
-    running_kb, done_kb, cancel_kb, disconnect_kb,
+    running_kb, done_kb, cancel_kb,
 )
 import userbot as ub
 from parser import parse_channel, get_forum_topics
@@ -24,9 +24,10 @@ def is_admin(uid: int) -> bool:
 
 
 @router.message(CommandStart())
-async def cmd_start(message: Message):
+async def cmd_start(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
         return await message.answer("⛔ Нет доступа.")
+    await state.clear()
     await message.answer(
         "👋 <b>Парсер Telegram</b>\n\nВыберите действие:",
         parse_mode="HTML",
@@ -49,100 +50,6 @@ async def back_main(call: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "noop")
 async def noop(call: CallbackQuery):
     await call.answer()
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  ПОДКЛЮЧЕНИЕ АККАУНТА
-# ═══════════════════════════════════════════════════════════════════════════════
-
-@router.callback_query(F.data == "connect_account")
-async def connect_account(call: CallbackQuery, state: FSMContext):
-    if not is_admin(call.from_user.id):
-        return await call.answer()
-    if ub.is_connected():
-        session = await get_session_info()
-        phone = session["phone"] if session else "неизвестен"
-        await call.message.edit_text(
-            f"✅ <b>Аккаунт подключён</b>\n📱 Номер: <code>{phone}</code>\n\n"
-            f"Хотите переподключить другой аккаунт — нажмите «Отключить».",
-            parse_mode="HTML",
-            reply_markup=disconnect_kb(),
-        )
-        return
-    await call.message.edit_text(
-        "🔑 <b>Шаг 1 из 3 — API ID</b>\n\nВведите ваш <b>API ID</b> (число с my.telegram.org):",
-        parse_mode="HTML",
-        reply_markup=cancel_kb(),
-    )
-    await state.set_state(AuthStates.waiting_api_id)
-
-
-@router.message(AuthStates.waiting_api_id)
-async def got_api_id(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
-        return
-    raw = message.text.strip()
-    if not raw.isdigit():
-        return await message.answer("❌ API ID — это число. Попробуйте ещё раз:")
-    await state.update_data(api_id=int(raw))
-    await message.answer(
-        "🔑 <b>Шаг 2 из 3 — API Hash</b>\n\nВведите ваш <b>API Hash</b>:",
-        parse_mode="HTML", reply_markup=cancel_kb(),
-    )
-    await state.set_state(AuthStates.waiting_api_hash)
-
-
-@router.message(AuthStates.waiting_api_hash)
-async def got_api_hash(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
-        return
-    raw = message.text.strip()
-    if len(raw) < 10:
-        return await message.answer("❌ Слишком короткий. Проверьте и введите снова:")
-    await state.update_data(api_hash=raw)
-    await message.answer(
-        "🔑 <b>Шаг 3 из 3 — Session String</b>\n\n"
-        "Введите ваш <b>Session String</b>.\n\n"
-        "Как получить — запустите скрипт <code>generate_session.py</code> на своём компьютере.",
-        parse_mode="HTML", reply_markup=cancel_kb(),
-    )
-    await state.set_state(AuthStates.waiting_code)
-
-
-@router.message(AuthStates.waiting_code)
-async def got_session_string(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
-        return
-    session_string = message.text.strip()
-    data = await state.get_data()
-    msg = await message.answer("⏳ Подключаю аккаунт...")
-    result = await ub.auth_via_session_string(
-        session_string=session_string,
-        api_id=data["api_id"],
-        api_hash=data["api_hash"],
-    )
-    if result.get("ok"):
-        await state.clear()
-        await msg.edit_text(
-            f"✅ <b>Аккаунт успешно подключён!</b>\n"
-            f"👤 {result.get('name','')} | 📱 {result.get('phone','')}",
-            parse_mode="HTML",
-            reply_markup=main_menu_kb(True),
-        )
-    else:
-        await msg.edit_text(
-            f"❌ Ошибка:\n<code>{result['error']}</code>",
-            parse_mode="HTML", reply_markup=cancel_kb(),
-        )
-
-
-@router.callback_query(F.data == "disconnect_account")
-async def disconnect_account(call: CallbackQuery):
-    if not is_admin(call.from_user.id):
-        return await call.answer()
-    await ub.full_disconnect()
-    await call.message.edit_text("🔌 <b>Аккаунт отключён.</b>",
-                                  parse_mode="HTML", reply_markup=main_menu_kb(False))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
