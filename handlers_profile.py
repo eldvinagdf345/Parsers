@@ -270,6 +270,24 @@ async def prof_delay_range(message: Message, state: FSMContext):
         except Exception:
             return await message.answer("❌ Формат: <code>30-180</code> или «-»:", parse_mode="HTML")
     await state.update_data(delay_min_seconds=delay_min, delay_max_seconds=delay_max)
+    await state.set_state(AccountProfileStates.waiting_extra_instructions)
+    await message.answer(
+        "1️⃣5️⃣ <b>Дополнительные инструкции</b>\n\n"
+        "Есть что-то ещё, что не покрыли предыдущие вопросы? Пишите своими словами — "
+        "любые детали, нюансы, примеры фраз, контекст. Это добавится к инструкциям ИИ "
+        "как есть. Или «-», чтобы пропустить:",
+        parse_mode="HTML",
+    )
+
+
+# ── 15. свободные инструкции ─────────────────────────────────────────────────
+
+@router.message(AccountProfileStates.waiting_extra_instructions)
+async def prof_extra_instructions(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    raw = message.text.strip()
+    await state.update_data(extra_instructions=None if raw == "-" else raw)
     await _finish_wizard(message, state)
 
 
@@ -278,7 +296,7 @@ _PROFILE_FIELDS = [
     "taboo_topics", "fallback_behavior", "stop_keywords",
     "max_messages_per_dialogue", "max_messages_per_day",
     "work_hours_start", "work_hours_end", "notify_chat_id",
-    "delay_min_seconds", "delay_max_seconds",
+    "delay_min_seconds", "delay_max_seconds", "extra_instructions",
 ]
 
 

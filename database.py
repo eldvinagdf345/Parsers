@@ -21,6 +21,7 @@ _ACCOUNT_PROFILE_COLUMNS = [
     ("notify_chat_id", "TEXT"),
     ("delay_min_seconds", "INTEGER DEFAULT 20"),
     ("delay_max_seconds", "INTEGER DEFAULT 90"),
+    ("extra_instructions", "TEXT"),
     ("profile_ready", "INTEGER DEFAULT 0"),
 ]
 

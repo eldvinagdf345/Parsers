@@ -75,6 +75,8 @@ def build_system_prompt(account: dict, contact: dict) -> str:
     parts.append(_LITERACY_TEXT.get(account.get("literacy"), _LITERACY_TEXT["casual"]))
     if account.get("taboo_topics"):
         parts.append(f"Никогда не поднимай и не отвечай по существу на темы: {account['taboo_topics']}.")
+    if account.get("extra_instructions"):
+        parts.append(f"Дополнительные инструкции от хозяина аккаунта: {account['extra_instructions']}")
     if contact.get("goal"):
         parts.append(f"Цель этого диалога: {contact['goal']}.")
     parts.append(

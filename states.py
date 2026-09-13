@@ -28,6 +28,7 @@ class AccountProfileStates(StatesGroup):
     waiting_work_hours         = State()
     waiting_notify_chat        = State()
     waiting_delay_range        = State()
+    waiting_extra_instructions = State()
 
 
 class ParserStates(StatesGroup):
