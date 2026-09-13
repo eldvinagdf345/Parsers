@@ -23,6 +23,9 @@ _ACCOUNT_PROFILE_COLUMNS = [
     ("delay_max_seconds", "INTEGER DEFAULT 90"),
     ("extra_instructions", "TEXT"),
     ("profile_ready", "INTEGER DEFAULT 0"),
+    ("custom_instructions", "TEXT"),
+    ("campaign_interval_min_seconds", "INTEGER DEFAULT 300"),
+    ("campaign_interval_max_seconds", "INTEGER DEFAULT 900"),
 ]
 
 

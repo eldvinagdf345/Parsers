@@ -13,6 +13,7 @@ from handlers_main import router as main_router
 from handlers_accounts import router as accounts_router
 from handlers_profile import router as profile_router
 from handlers_dialogue import router as dialogue_router
+from handlers_campaign import router as campaign_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -46,6 +47,7 @@ async def main():
     dp.include_router(accounts_router)
     dp.include_router(profile_router)
     dp.include_router(dialogue_router)
+    dp.include_router(campaign_router)
     dp.include_router(main_router)
 
     logger.info("Polling started")
