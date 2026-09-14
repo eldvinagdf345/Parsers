@@ -49,7 +49,8 @@ _LITERACY_TEXT = {
     "casual": "Пиши как в обычной переписке в мессенджере — можно проще, без лишних знаков препинания.",
 }
 
-ESCALATE_PREFIX = "ESCALATE"
+STOP_INSTRUCTION_PREFIX = "STOP_BY_INSTRUCTION"
+STOP_UNKNOWN_PREFIX = "UNKNOWN_PATTERN"
 
 
 def init(bot, admin_ids: list[int]):
@@ -87,17 +88,22 @@ def build_system_prompt(account: dict, contact: dict) -> str:
     if contact.get("goal"):
         parts.append(f"Цель этого диалога: {contact['goal']}.")
     parts.append(
-        "Если разговор выходит за рамки этой цели, становится слишком личным, важным, "
-        "спорным или конфликтным, либо собеседник просит то, что должен решить только "
-        "хозяин аккаунта лично (деньги, документы, встречи, обещания) — не отвечай как обычно. "
-        f"Вместо этого выведи РОВНО одну строку в формате «{ESCALATE_PREFIX}: <короткая причина>» "
-        "и больше ничего."
+        "Есть два случая, когда вместо обычного ответа нужно остановиться и передать "
+        "диалог хозяину аккаунта — тогда выведи РОВНО одну строку и больше ничего:\n"
+        f"1. Если в инструкциях выше явно описано, что при таком сообщении/ситуации нужно "
+        f"прекратить отвечать (например, речь зашла о деньгах, документах, встрече, "
+        f"конкретной теме, которую указано передавать хозяину) — выведи "
+        f"«{STOP_INSTRUCTION_PREFIX}: <короткая причина>».\n"
+        f"2. Если сообщение собеседника не подходит ни под одну описанную в инструкциях "
+        f"ситуацию, и ты не знаешь, как правильно ответить, следуя инструкциям — выведи "
+        f"«{STOP_UNKNOWN_PREFIX}: <короткая причина>»."
     )
     return "\n".join(parts)
 
 
 async def generate_reply(account: dict, contact: dict, history: list[dict]) -> dict:
-    """Returns {"escalate": bool, "reason": str|None, "text": str|None}."""
+    """Returns {"escalate": bool, "stop_type": "instruction"|"unknown"|None,
+    "reason": str|None, "text": str|None}."""
     if not _ai_client:
         raise RuntimeError("ANTHROPIC_API_KEY не задан — ИИ-диалоги недоступны")
 
@@ -113,11 +119,14 @@ async def generate_reply(account: dict, contact: dict, history: list[dict]) -> d
         model=AI_MODEL, max_tokens=400, system=system, messages=messages,
     )
     text = "".join(b.text for b in resp.content if b.type == "text").strip()
+    upper = text.upper()
 
-    if text.upper().startswith(ESCALATE_PREFIX):
-        reason = text.split(":", 1)[1].strip() if ":" in text else "ИИ решил, что нужно ваше вмешательство"
-        return {"escalate": True, "reason": reason, "text": None}
-    return {"escalate": False, "reason": None, "text": text}
+    for prefix, stop_type in ((STOP_INSTRUCTION_PREFIX, "instruction"), (STOP_UNKNOWN_PREFIX, "unknown")):
+        if upper.startswith(prefix):
+            reason = text.split(":", 1)[1].strip() if ":" in text else "ИИ решил, что нужно ваше вмешательство"
+            return {"escalate": True, "stop_type": stop_type, "reason": reason, "text": None}
+
+    return {"escalate": False, "stop_type": None, "reason": None, "text": text}
 
 
 async def generate_opening_message(contact: dict, account: dict | None = None) -> str:
@@ -225,29 +234,37 @@ async def _notify(account: dict, text: str):
             logger.exception("Failed to notify admin %s", admin_id)
 
 
-async def _notify_unknown_pattern(contact: dict, incoming_text: str, reason: str):
-    from keyboards import unknown_pattern_kb
+_STOP_TITLES = {
+    "instruction": "🛑 Завершение по инструкции",
+    "unknown": "❓ Неизвестный паттерн",
+}
+
+
+async def _notify_stop_card(contact: dict, incoming_text: str, stop_type: str, reason: str):
+    from keyboards import stop_action_kb
 
     if not _bot:
         return
     account = await get_account(contact["account_id"])
     who = esc(contact.get("display_name") or contact["identifier"])
+    title = _STOP_TITLES.get(stop_type, _STOP_TITLES["unknown"])
     text = (
-        f"❓ <b>Неизвестный паттерн</b>\n"
+        f"{title}\n"
         f"👤 Аккаунт: {esc(account['label']) if account else '?'}\n"
         f"📇 Контакт: {who}\n"
         f"Причина остановки: {esc(reason)}\n\n"
         f"<b>Сообщение:</b> {esc(incoming_text)}\n\n"
-        f"<i>Диалог на паузе. Опишите, как отвечать на такие сообщения — это дополнит "
-        f"инструкции аккаунта, и бот попробует ответить снова.</i>"
+        f"<i>Диалог на паузе. Укажите дальнейшие действия — это дополнит инструкции "
+        f"аккаунта для всех диалогов, и бот попробует ответить снова. Либо отклоните — "
+        f"бот перестанет отвечать только этому контакту, дальше ведите диалог сами.</i>"
     )
     for admin_id in _admin_ids:
         try:
             await _bot.send_message(
-                admin_id, text, parse_mode="HTML", reply_markup=unknown_pattern_kb(contact["id"]),
+                admin_id, text, parse_mode="HTML", reply_markup=stop_action_kb(contact["id"]),
             )
         except Exception:
-            logger.exception("Failed to notify admin %s about unknown pattern (contact %s)", admin_id, contact["id"])
+            logger.exception("Failed to notify admin %s about stop (contact %s)", admin_id, contact["id"])
 
 
 async def retry_after_instruction(contact_id: int) -> str:
@@ -269,9 +286,11 @@ async def retry_after_instruction(contact_id: int) -> str:
         return "✅ Диалог возобновлён, но ИИ сейчас недоступен — попробуйте ещё раз чуть позже."
 
     who = esc(contact.get("display_name") or contact["identifier"])
+    incoming = next((m["text"] for m in reversed(history) if m["direction"] == "in"), "")
 
     if result["escalate"]:
         await set_contact_status(contact_id, "paused")
+        await _notify_stop_card(contact, incoming, result["stop_type"], result["reason"])
         return f"⚠️ Даже с новой инструкцией ИИ решил остановиться: {esc(result['reason'])}"
 
     reply_text = result["text"]
@@ -291,7 +310,6 @@ async def retry_after_instruction(contact_id: int) -> str:
         return f"✅ Диалог с {who} возобновлён, ответ отправлен."
 
     msg_id = await add_dialogue_message(contact_id, "out", reply_text, status="draft")
-    incoming = next((m["text"] for m in reversed(history) if m["direction"] == "in"), "")
     await _notify_admins_draft(contact, incoming, reply_text, msg_id)
     return f"✅ Диалог с {who} возобновлён, черновик ответа отправлен вам на проверку."
 
@@ -364,7 +382,7 @@ async def handle_incoming_message(account_id: int, client, message):
             f"⏸ <b>Диалог остановлен</b>\n👤 Аккаунт: {esc(account['label'])}\n📇 {who}\n"
             f"Причина: {esc(hard_reason)}\n\n<b>Сообщение:</b> {esc(message.text)}",
         )
-        await _notify_unknown_pattern(contact, message.text, hard_reason)
+        await _notify_stop_card(contact, message.text, "instruction", hard_reason)
         return
 
     history = await get_dialogue_history(contact["id"], limit=20)
@@ -381,7 +399,7 @@ async def handle_incoming_message(account_id: int, client, message):
             f"⏸ <b>Диалог остановлен (решение ИИ)</b>\n👤 Аккаунт: {esc(account['label'])}\n📇 {who}\n"
             f"Причина: {esc(result['reason'])}\n\n<b>Сообщение:</b> {esc(message.text)}",
         )
-        await _notify_unknown_pattern(contact, message.text, result["reason"])
+        await _notify_stop_card(contact, message.text, result["stop_type"], result["reason"])
         return
 
     reply_text = result["text"]

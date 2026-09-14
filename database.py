@@ -67,7 +67,7 @@ async def init_db():
                 display_name TEXT,
                 goal TEXT,
                 ai_enabled INTEGER DEFAULT 1,
-                auto_send INTEGER DEFAULT 0,
+                auto_send INTEGER DEFAULT 1,
                 status TEXT DEFAULT 'active',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(account_id, identifier)
@@ -203,7 +203,7 @@ async def count_out_messages_today_for_account(account_id: int) -> int:
 
 async def create_contact(
     account_id: int, identifier: str, display_name: str | None = None,
-    goal: str | None = None, auto_send: bool = False,
+    goal: str | None = None, auto_send: bool = True,
 ) -> int:
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
@@ -256,6 +256,12 @@ async def set_contact_status(contact_id: int, status: str):
 async def set_contact_auto_send(contact_id: int, auto_send: bool):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("UPDATE contacts SET auto_send=? WHERE id=?", (int(auto_send), contact_id))
+        await db.commit()
+
+
+async def set_contact_ai_enabled(contact_id: int, enabled: bool):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE contacts SET ai_enabled=? WHERE id=?", (int(enabled), contact_id))
         await db.commit()
 
 

@@ -140,13 +140,6 @@ def choose_account_kb(accounts: list[dict]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def dialogue_mode_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✍️ Черновики (проверять перед отправкой)", callback_data="setup_mode_draft")],
-        [InlineKeyboardButton(text="🚀 Отправлять автоматически", callback_data="setup_mode_auto")],
-    ])
-
-
 def opening_message_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🤖 Пусть ИИ придумает", callback_data="opening_ai")],
@@ -175,17 +168,18 @@ def dialogue_detail_kb(contact: dict) -> InlineKeyboardMarkup:
         if contact["auto_send"] else
         InlineKeyboardButton(text="🚀 Включить автоотправку", callback_data=f"dlg_mode_auto:{contact['id']}")
     )
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [pause_btn],
-        [mode_btn],
-        [InlineKeyboardButton(text="🗑 Удалить диалог", callback_data=f"dlg_delete:{contact['id']}")],
-        [InlineKeyboardButton(text="◀️ К списку", callback_data="dialogues_menu")],
-    ])
+    rows = [[pause_btn], [mode_btn]]
+    if not contact["ai_enabled"]:
+        rows.append([InlineKeyboardButton(text="🤖 Включить ИИ снова", callback_data=f"dlg_ai_on:{contact['id']}")])
+    rows.append([InlineKeyboardButton(text="🗑 Удалить диалог", callback_data=f"dlg_delete:{contact['id']}")])
+    rows.append([InlineKeyboardButton(text="◀️ К списку", callback_data="dialogues_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def unknown_pattern_kb(contact_id: int) -> InlineKeyboardMarkup:
+def stop_action_kb(contact_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📝 Задать инструкцию", callback_data=f"fix_pattern:{contact_id}")],
+        [InlineKeyboardButton(text="📝 Указать дальнейшие действия", callback_data=f"fix_pattern:{contact_id}")],
+        [InlineKeyboardButton(text="🚫 Игнорировать", callback_data=f"ignore_contact:{contact_id}")],
     ])
 
 

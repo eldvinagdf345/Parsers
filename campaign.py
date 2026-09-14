@@ -26,8 +26,8 @@ def get_progress(account_id: int) -> dict | None:
 def start_campaign(account_id: int, usernames: list[str]) -> bool:
     """Starts dialogues with everyone in `usernames`, relying entirely on the
     account's own instructions/persona — no per-campaign goal or send-mode,
-    those are already configured on the account. New contacts always start
-    in draft-review mode (safe default)."""
+    those are already configured on the account. New contacts start with
+    auto-send on, same as any other new dialogue."""
     if account_id in _running:
         return False
     task = asyncio.create_task(_run(account_id, usernames))
@@ -79,9 +79,7 @@ async def _run(account_id: int, usernames: list[str]):
                 logger.exception("Campaign: failed to send to %s", identifier)
                 continue
 
-            contact_id = await create_contact(
-                account_id=account_id, identifier=identifier, auto_send=False,
-            )
+            contact_id = await create_contact(account_id=account_id, identifier=identifier)
             await add_dialogue_message(contact_id, "out", opening, status="sent")
             _progress[account_id]["sent"] += 1
 

@@ -3,7 +3,10 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
 from config import ADMIN_IDS
-from database import get_account, get_contact, update_account_profile
+from database import (
+    get_account, get_contact, update_account_profile,
+    set_contact_ai_enabled, set_contact_status,
+)
 from states import InstructionsChatStates, QuickSettingStates
 from keyboards import (
     account_settings_kb, instructions_chat_kb, instructions_reset_confirm_kb, setting_edit_kb,
@@ -62,6 +65,25 @@ async def fix_pattern_open(call: CallbackQuery, state: FSMContext):
     await call.message.reply(
         "📝 Опишите, как нужно было ответить на это сообщение. Это дополнит общие инструкции "
         "аккаунта, после чего диалог возобновится и бот попробует ответить снова:",
+    )
+
+
+@router.callback_query(F.data.startswith("ignore_contact:"))
+async def ignore_contact(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return await call.answer()
+    contact_id = int(call.data.split(":", 1)[1])
+    contact = await get_contact(contact_id)
+    if not contact:
+        return await call.answer("Диалог не найден", show_alert=True)
+    await set_contact_ai_enabled(contact_id, False)
+    await set_contact_status(contact_id, "active")
+    who = esc(contact.get("display_name") or contact["identifier"])
+    await call.answer("Бот больше не будет отвечать этому контакту")
+    await call.message.edit_text(
+        f"{call.message.text}\n\n🚫 <b>Проигнорировано.</b> ИИ больше не будет отвечать "
+        f"{who} — ведите диалог сами через «Диалоги».",
+        parse_mode="HTML",
     )
 
 

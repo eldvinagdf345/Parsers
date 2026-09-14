@@ -5,12 +5,12 @@ from aiogram.fsm.context import FSMContext
 from config import ADMIN_IDS
 from database import (
     get_accounts, get_account, get_all_contacts, get_contact,
-    create_contact, delete_contact, set_contact_status, set_contact_auto_send,
+    create_contact, delete_contact, set_contact_status, set_contact_auto_send, set_contact_ai_enabled,
     get_dialogue_history, add_dialogue_message, get_message, set_message_status, set_message_text,
 )
 from states import DialogueSetupStates, DraftEditStates
 from keyboards import (
-    main_menu_kb, dialogues_list_kb, choose_account_kb, dialogue_mode_kb,
+    main_menu_kb, dialogues_list_kb, choose_account_kb,
     opening_message_kb, opening_preview_kb, dialogue_detail_kb, cancel_kb,
 )
 import userbot as ub
@@ -67,6 +67,7 @@ async def dlg_view(call: CallbackQuery):
 
     mode = "🚀 автоотправка" if contact["auto_send"] else "✍️ черновики на проверку"
     status = "🟢 активен" if contact["status"] == "active" else "⏸ на паузе"
+    ai_note = "" if contact["ai_enabled"] else " | 🚫 ИИ отключён для этого контакта"
     goal = esc(contact.get("goal")) or "—"
     who = esc(contact.get("display_name") or contact["identifier"])
 
@@ -74,7 +75,7 @@ async def dlg_view(call: CallbackQuery):
         f"📇 <b>{who}</b> ({esc(contact['identifier'])})\n"
         f"👤 Аккаунт: {esc(account['label']) if account else '?'}\n"
         f"🎯 Цель: {goal}\n"
-        f"Режим: {mode} | Статус: {status}\n\n"
+        f"Режим: {mode} | Статус: {status}{ai_note}\n\n"
         f"<b>Последние сообщения:</b>\n{transcript}",
         parse_mode="HTML",
         reply_markup=dialogue_detail_kb(contact),
@@ -114,6 +115,15 @@ async def dlg_mode_draft(call: CallbackQuery):
         return await call.answer()
     contact_id = int(call.data.split(":", 1)[1])
     await set_contact_auto_send(contact_id, False)
+    await dlg_view(call)
+
+
+@router.callback_query(F.data.startswith("dlg_ai_on:"))
+async def dlg_ai_on(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return await call.answer()
+    contact_id = int(call.data.split(":", 1)[1])
+    await set_contact_ai_enabled(contact_id, True)
     await dlg_view(call)
 
 
@@ -193,19 +203,6 @@ async def got_goal(message: Message, state: FSMContext):
     goal = None if raw in ("-", "") else raw
     await state.update_data(goal=goal)
     await message.answer(
-        "⚙️ <b>Режим ответов</b>\n\n"
-        "«Черновики» — каждый ответ ИИ сначала присылается вам на проверку.\n"
-        "«Автоматически» — ответы уходят собеседнику сразу, без подтверждения.",
-        parse_mode="HTML", reply_markup=dialogue_mode_kb(),
-    )
-
-
-@router.callback_query(F.data.in_(["setup_mode_draft", "setup_mode_auto"]))
-async def got_mode(call: CallbackQuery, state: FSMContext):
-    if not is_admin(call.from_user.id):
-        return await call.answer()
-    await state.update_data(auto_send=(call.data == "setup_mode_auto"))
-    await call.message.edit_text(
         "✉️ <b>Первое сообщение</b>\n\nКак начнём разговор?",
         parse_mode="HTML", reply_markup=opening_message_kb(),
     )
@@ -300,16 +297,15 @@ async def _finalize_dialogue(event, state: FSMContext, opening_text: str):
     contact_id = await create_contact(
         account_id=account_id, identifier=identifier,
         display_name=data.get("display_name"), goal=data.get("goal"),
-        auto_send=data.get("auto_send", False),
     )
     await add_dialogue_message(contact_id, "out", opening_text, status="sent")
     await state.clear()
 
-    mode = "автоматическая отправка" if data.get("auto_send") else "черновики на проверку"
     confirmation = (
         f"✅ <b>Диалог начат</b>\n\n"
         f"Сообщение отправлено {esc(data.get('display_name') or identifier)}.\n"
-        f"Режим ответов: {mode}."
+        f"Ответы будут отправляться автоматически (можно переключить на черновики в "
+        f"карточке диалога)."
     )
     if isinstance(event, CallbackQuery):
         await event.message.edit_text(confirmation, parse_mode="HTML", reply_markup=main_menu_kb(ub.is_connected()))
