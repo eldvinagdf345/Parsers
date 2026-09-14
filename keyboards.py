@@ -7,8 +7,6 @@ def main_menu_kb(has_accounts: bool) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=accounts_text, callback_data="accounts_menu")],
         [InlineKeyboardButton(text="💬 Диалоги", callback_data="dialogues_menu")],
         [InlineKeyboardButton(text="📨 Рассылка", callback_data="campaign_menu")],
-        [InlineKeyboardButton(text="🚀 Начать парсинг", callback_data="start_parsing")],
-        [InlineKeyboardButton(text="📋 Результаты парсинга", callback_data="show_results")],
         [InlineKeyboardButton(text="📥 Загрузить базу", callback_data="upload_base")],
     ])
 
@@ -18,62 +16,6 @@ def auth_method_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="📱 Войти по номеру телефона", callback_data="auth_phone")],
         [InlineKeyboardButton(text="✍️ У меня есть Session String", callback_data="auth_session_string")],
         [InlineKeyboardButton(text="❌ Отмена", callback_data="back_main")],
-    ])
-
-
-def channel_select_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📋 Выбрать из моих каналов", callback_data="channel_from_list")],
-        [InlineKeyboardButton(text="🔗 Ввести ссылку", callback_data="channel_by_link")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_main")],
-    ])
-
-
-def channels_list_kb(channels: list) -> InlineKeyboardMarkup:
-    buttons = []
-    for title, cid in channels:
-        short = title[:30] + "…" if len(title) > 30 else title
-        buttons.append([InlineKeyboardButton(text=short, callback_data=f"pick_channel:{cid}")])
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="start_parsing")])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-
-def topics_list_kb(topics: list, channel: str) -> InlineKeyboardMarkup:
-    buttons = []
-    for tid, title in topics:
-        short = title[:30] + "…" if len(title) > 30 else title
-        buttons.append([InlineKeyboardButton(text=f"💬 {short}", callback_data=f"pick_topic:{tid}")])
-    buttons.append([InlineKeyboardButton(text="📥 Все темы сразу", callback_data="pick_topic:all")])
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="start_parsing")])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-
-def parse_mode_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📥 Все посты", callback_data="mode_all")],
-        [InlineKeyboardButton(text="🔢 Указать количество постов", callback_data="mode_count")],
-        [InlineKeyboardButton(text="📅 Указать диапазон дат", callback_data="mode_dates")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_main")],
-    ])
-
-
-def confirm_parse_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="▶️ Запустить", callback_data="run_parser")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_main")],
-    ])
-
-
-def running_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⏳ В работе...", callback_data="noop")],
-    ])
-
-
-def done_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Завершено", callback_data="noop")],
-        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_main")],
     ])
 
 
@@ -241,6 +183,12 @@ def dialogue_detail_kb(contact: dict) -> InlineKeyboardMarkup:
     ])
 
 
+def unknown_pattern_kb(contact_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📝 Задать инструкцию", callback_data=f"fix_pattern:{contact_id}")],
+    ])
+
+
 def draft_approval_kb(message_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -262,16 +210,9 @@ def campaign_choose_account_kb(accounts: list[dict]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def campaign_mode_kb() -> InlineKeyboardMarkup:
+def campaign_confirm_kb(account_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✍️ Черновики (проверять перед отправкой)", callback_data="campaign_mode_draft")],
-        [InlineKeyboardButton(text="🚀 Отправлять автоматически", callback_data="campaign_mode_auto")],
-    ])
-
-
-def campaign_confirm_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="▶️ Запустить рассылку", callback_data="campaign_start")],
+        [InlineKeyboardButton(text="▶️ Запустить рассылку", callback_data=f"campaign_start:{account_id}")],
         [InlineKeyboardButton(text="❌ Отмена", callback_data="back_main")],
     ])
 

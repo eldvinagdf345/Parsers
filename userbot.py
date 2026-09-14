@@ -27,12 +27,6 @@ def get_client(account_id: int) -> Client | None:
     return _clients.get(account_id)
 
 
-def get_userbot() -> Client | None:
-    """First connected account — used by the channel-parsing feature, which
-    is single-account by design."""
-    return next(iter(_clients.values()), None)
-
-
 def is_connected() -> bool:
     return len(_clients) > 0
 

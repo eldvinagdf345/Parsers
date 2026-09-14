@@ -3,12 +3,13 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
 from config import ADMIN_IDS
-from database import get_account, update_account_profile
+from database import get_account, get_contact, update_account_profile
 from states import InstructionsChatStates, QuickSettingStates
 from keyboards import (
     account_settings_kb, instructions_chat_kb, instructions_reset_confirm_kb, setting_edit_kb,
 )
 import instructions_chat
+import dialogue as dlg
 from utils import esc
 
 router = Router()
@@ -45,6 +46,25 @@ async def instr_open(call: CallbackQuery, state: FSMContext):
     )
 
 
+@router.callback_query(F.data.startswith("fix_pattern:"))
+async def fix_pattern_open(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return await call.answer()
+    contact_id = int(call.data.split(":", 1)[1])
+    contact = await get_contact(contact_id)
+    if not contact:
+        return await call.answer("Диалог не найден", show_alert=True)
+    if not instructions_chat.ai_available():
+        return await call.answer("⚠️ ANTHROPIC_API_KEY не настроен на сервере.", show_alert=True)
+
+    await state.set_state(InstructionsChatStates.chatting)
+    await state.update_data(instr_account_id=contact["account_id"], retry_contact_id=contact_id)
+    await call.message.reply(
+        "📝 Опишите, как нужно было ответить на это сообщение. Это дополнит общие инструкции "
+        "аккаунта, после чего диалог возобновится и бот попробует ответить снова:",
+    )
+
+
 @router.message(InstructionsChatStates.chatting)
 async def instr_got_message(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
@@ -53,11 +73,20 @@ async def instr_got_message(message: Message, state: FSMContext):
         return await message.answer("Пришлите текстовое сообщение.")
     data = await state.get_data()
     account_id = data["instr_account_id"]
+    retry_contact_id = data.get("retry_contact_id")
     msg = await message.answer("⏳ Обновляю инструкции...")
     try:
         result = await instructions_chat.update_instructions(account_id, message.text.strip())
     except Exception as e:
         return await msg.edit_text(f"❌ Ошибка ИИ:\n<code>{esc(e)}</code>", parse_mode="HTML")
+
+    if retry_contact_id:
+        await state.clear()
+        outcome = await dlg.retry_after_instruction(retry_contact_id)
+        return await msg.edit_text(
+            f"{esc(result['reply'])}\n\n{outcome}", parse_mode="HTML",
+        )
+
     await msg.edit_text(
         f"{esc(result['reply'])}\n\nМожете продолжать писать, или нажмите «Готово».",
         parse_mode="HTML",

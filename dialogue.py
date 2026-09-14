@@ -207,12 +207,93 @@ async def _notify(account: dict, text: str):
     if not _bot:
         return
     raw_target = account.get("notify_chat_id")
-    targets = [_parse_chat_target(raw_target)] if raw_target else list(_admin_ids)
-    for target in targets:
+    if raw_target:
+        target = _parse_chat_target(raw_target)
         try:
             await _bot.send_message(target, text, parse_mode="HTML")
+            return
         except Exception:
-            logger.exception("Failed to notify %s", target)
+            logger.exception("Failed to notify configured chat %s, falling back to admins", target)
+            text = (
+                "⚠️ Не удалось отправить в настроенный канал уведомлений — проверьте, что "
+                "бот добавлен туда с правом писать сообщения.\n\n" + text
+            )
+    for admin_id in _admin_ids:
+        try:
+            await _bot.send_message(admin_id, text, parse_mode="HTML")
+        except Exception:
+            logger.exception("Failed to notify admin %s", admin_id)
+
+
+async def _notify_unknown_pattern(contact: dict, incoming_text: str, reason: str):
+    from keyboards import unknown_pattern_kb
+
+    if not _bot:
+        return
+    account = await get_account(contact["account_id"])
+    who = esc(contact.get("display_name") or contact["identifier"])
+    text = (
+        f"❓ <b>Неизвестный паттерн</b>\n"
+        f"👤 Аккаунт: {esc(account['label']) if account else '?'}\n"
+        f"📇 Контакт: {who}\n"
+        f"Причина остановки: {esc(reason)}\n\n"
+        f"<b>Сообщение:</b> {esc(incoming_text)}\n\n"
+        f"<i>Диалог на паузе. Опишите, как отвечать на такие сообщения — это дополнит "
+        f"инструкции аккаунта, и бот попробует ответить снова.</i>"
+    )
+    for admin_id in _admin_ids:
+        try:
+            await _bot.send_message(
+                admin_id, text, parse_mode="HTML", reply_markup=unknown_pattern_kb(contact["id"]),
+            )
+        except Exception:
+            logger.exception("Failed to notify admin %s about unknown pattern (contact %s)", admin_id, contact["id"])
+
+
+async def retry_after_instruction(contact_id: int) -> str:
+    """Called after the owner adds an instruction targeted at a stuck dialogue —
+    resumes it and tries to answer the message that triggered the stop."""
+    contact = await get_contact(contact_id)
+    if not contact:
+        return "⚠️ Диалог не найден."
+    account = await get_account(contact["account_id"])
+    if not account:
+        return "⚠️ Аккаунт не найден."
+
+    await set_contact_status(contact_id, "active")
+    history = await get_dialogue_history(contact_id, limit=20)
+    try:
+        result = await generate_reply(account, contact, history)
+    except Exception:
+        logger.exception("retry_after_instruction: AI reply generation failed for contact %s", contact_id)
+        return "✅ Диалог возобновлён, но ИИ сейчас недоступен — попробуйте ещё раз чуть позже."
+
+    who = esc(contact.get("display_name") or contact["identifier"])
+
+    if result["escalate"]:
+        await set_contact_status(contact_id, "paused")
+        return f"⚠️ Даже с новой инструкцией ИИ решил остановиться: {esc(result['reason'])}"
+
+    reply_text = result["text"]
+    if not reply_text:
+        return f"✅ Диалог с {who} возобновлён."
+
+    if contact["auto_send"]:
+        client = ub.get_client(contact["account_id"])
+        if not client:
+            return "⚠️ Аккаунт отключён, не удалось отправить ответ."
+        try:
+            await _dispatch_message(client, contact["identifier"], reply_text, account, full_delay=True)
+        except Exception:
+            logger.exception("retry_after_instruction: failed to send reply for contact %s", contact_id)
+            return "⚠️ Не удалось отправить ответ."
+        await add_dialogue_message(contact_id, "out", reply_text, status="sent")
+        return f"✅ Диалог с {who} возобновлён, ответ отправлен."
+
+    msg_id = await add_dialogue_message(contact_id, "out", reply_text, status="draft")
+    incoming = next((m["text"] for m in reversed(history) if m["direction"] == "in"), "")
+    await _notify_admins_draft(contact, incoming, reply_text, msg_id)
+    return f"✅ Диалог с {who} возобновлён, черновик ответа отправлен вам на проверку."
 
 
 async def _notify_admins_draft(contact: dict, incoming_text: str, draft_text: str, msg_id: int):
@@ -260,6 +341,12 @@ async def handle_incoming_message(account_id: int, client, message):
 
     await add_dialogue_message(contact["id"], "in", message.text)
 
+    try:
+        await asyncio.sleep(random.uniform(1, 3))
+        await client.read_chat_history(peer.id)
+    except Exception:
+        logger.exception("Failed to mark chat as read for %s", peer.id)
+
     if not contact["ai_enabled"] or not _ai_client:
         return
 
@@ -277,6 +364,7 @@ async def handle_incoming_message(account_id: int, client, message):
             f"⏸ <b>Диалог остановлен</b>\n👤 Аккаунт: {esc(account['label'])}\n📇 {who}\n"
             f"Причина: {esc(hard_reason)}\n\n<b>Сообщение:</b> {esc(message.text)}",
         )
+        await _notify_unknown_pattern(contact, message.text, hard_reason)
         return
 
     history = await get_dialogue_history(contact["id"], limit=20)
@@ -293,6 +381,7 @@ async def handle_incoming_message(account_id: int, client, message):
             f"⏸ <b>Диалог остановлен (решение ИИ)</b>\n👤 Аккаунт: {esc(account['label'])}\n📇 {who}\n"
             f"Причина: {esc(result['reason'])}\n\n<b>Сообщение:</b> {esc(message.text)}",
         )
+        await _notify_unknown_pattern(contact, message.text, result["reason"])
         return
 
     reply_text = result["text"]
