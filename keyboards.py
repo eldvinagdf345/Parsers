@@ -145,8 +145,32 @@ def dialogues_list_kb(contacts: list[dict]) -> InlineKeyboardMarkup:
         name = c.get("display_name") or c["identifier"]
         buttons.append([InlineKeyboardButton(text=f"{mark} {name}", callback_data=f"dlg_view:{c['id']}")])
     buttons.append([InlineKeyboardButton(text="➕ Новый диалог", callback_data="dlg_new")])
+    if contacts:
+        buttons.append([InlineKeyboardButton(text="🗑 Аннулировать...", callback_data="dlg_bulk_start")])
+        buttons.append([InlineKeyboardButton(text="🗑 Аннулировать все", callback_data="dlg_bulk_all")])
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="back_main")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def dialogues_select_kb(contacts: list[dict], selected_ids: set[int]) -> InlineKeyboardMarkup:
+    buttons = []
+    for c in contacts:
+        mark = "✅" if c["id"] in selected_ids else "⬜"
+        name = c.get("display_name") or c["identifier"]
+        buttons.append([InlineKeyboardButton(text=f"{mark} {name}", callback_data=f"dlg_bulk_toggle:{c['id']}")])
+    buttons.append([InlineKeyboardButton(
+        text=f"🗑 Аннулировать выбранные ({len(selected_ids)})",
+        callback_data="dlg_bulk_confirm",
+    )])
+    buttons.append([InlineKeyboardButton(text="◀️ Отмена", callback_data="dialogues_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def dialogues_bulk_all_confirm_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⚠️ Да, аннулировать все", callback_data="dlg_bulk_all_yes")],
+        [InlineKeyboardButton(text="◀️ Отмена", callback_data="dialogues_menu")],
+    ])
 
 
 def choose_account_kb(accounts: list[dict]) -> InlineKeyboardMarkup:

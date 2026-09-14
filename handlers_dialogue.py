@@ -5,13 +5,14 @@ from aiogram.fsm.context import FSMContext
 from config import ADMIN_IDS
 from database import (
     get_accounts, get_account, get_all_contacts, get_contact,
-    create_contact, delete_contact, set_contact_status, set_contact_auto_send, set_contact_ai_enabled,
+    create_contact, delete_contact, delete_contacts, delete_all_contacts,
+    set_contact_status, set_contact_auto_send, set_contact_ai_enabled,
     get_dialogue_history, add_dialogue_message, get_message, set_message_status, set_message_text,
 )
-from states import DialogueSetupStates, DraftEditStates
+from states import DialogueSetupStates, DraftEditStates, DialogueBulkStates
 from keyboards import (
-    main_menu_kb, dialogues_list_kb, choose_account_kb,
-    opening_message_kb, opening_preview_kb, dialogue_detail_kb, cancel_kb,
+    main_menu_kb, dialogues_list_kb, dialogues_select_kb, dialogues_bulk_all_confirm_kb,
+    choose_account_kb, opening_message_kb, opening_preview_kb, dialogue_detail_kb, cancel_kb,
 )
 import userbot as ub
 import dialogue as dlg
@@ -134,6 +135,85 @@ async def dlg_delete(call: CallbackQuery, state: FSMContext):
     contact_id = int(call.data.split(":", 1)[1])
     await delete_contact(contact_id)
     await call.answer("Диалог удалён")
+    await dialogues_menu(call, state)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  АННУЛИРОВАНИЕ ДИАЛОГОВ (сброс до "новый" / удаление из списка)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.callback_query(F.data == "dlg_bulk_start")
+async def dlg_bulk_start(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return await call.answer()
+    contacts = await get_all_contacts()
+    if not contacts:
+        return await call.answer("Список диалогов пуст", show_alert=True)
+    await state.set_state(DialogueBulkStates.selecting)
+    await state.update_data(selected_ids=[])
+    await call.message.edit_text(
+        "🗑 <b>Аннулирование диалогов</b>\n\n"
+        "Отметьте, кого аннулировать — эти чаты будут считаться новыми, "
+        "переписка с ними удалится и бот не будет с ними взаимодействовать, "
+        "пока их не добавят заново.",
+        parse_mode="HTML",
+        reply_markup=dialogues_select_kb(contacts, set()),
+    )
+
+
+@router.callback_query(DialogueBulkStates.selecting, F.data.startswith("dlg_bulk_toggle:"))
+async def dlg_bulk_toggle(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return await call.answer()
+    contact_id = int(call.data.split(":", 1)[1])
+    data = await state.get_data()
+    selected = set(data.get("selected_ids", []))
+    if contact_id in selected:
+        selected.discard(contact_id)
+    else:
+        selected.add(contact_id)
+    await state.update_data(selected_ids=list(selected))
+    contacts = await get_all_contacts()
+    await call.message.edit_reply_markup(reply_markup=dialogues_select_kb(contacts, selected))
+    await call.answer()
+
+
+@router.callback_query(DialogueBulkStates.selecting, F.data == "dlg_bulk_confirm")
+async def dlg_bulk_confirm(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return await call.answer()
+    data = await state.get_data()
+    selected = list(data.get("selected_ids", []))
+    if not selected:
+        return await call.answer("Ничего не выбрано", show_alert=True)
+    await delete_contacts(selected)
+    await state.clear()
+    await call.answer(f"Аннулировано: {len(selected)}")
+    await dialogues_menu(call, state)
+
+
+@router.callback_query(F.data == "dlg_bulk_all")
+async def dlg_bulk_all(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return await call.answer()
+    contacts = await get_all_contacts()
+    if not contacts:
+        return await call.answer("Список диалогов пуст", show_alert=True)
+    await call.message.edit_text(
+        f"⚠️ Аннулировать <b>все</b> диалоги ({len(contacts)})? "
+        f"Вся переписка удалится, чаты станут новыми, бот не будет взаимодействовать "
+        f"с этими людьми, пока их не добавят заново. Действие необратимо.",
+        parse_mode="HTML",
+        reply_markup=dialogues_bulk_all_confirm_kb(),
+    )
+
+
+@router.callback_query(F.data == "dlg_bulk_all_yes")
+async def dlg_bulk_all_yes(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return await call.answer()
+    await delete_all_contacts()
+    await call.answer("Все диалоги аннулированы")
     await dialogues_menu(call, state)
 
 
