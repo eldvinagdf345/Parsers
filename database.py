@@ -116,6 +116,12 @@ async def get_all_users() -> list:
     return [r[0] for r in rows]
 
 
+async def clear_users():
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM parsed_users")
+        await db.commit()
+
+
 async def get_users_count() -> int:
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute("SELECT COUNT(*) FROM parsed_users")
@@ -269,6 +275,23 @@ async def delete_contact(contact_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("PRAGMA foreign_keys = ON")
         await db.execute("DELETE FROM contacts WHERE id=?", (contact_id,))
+        await db.commit()
+
+
+async def delete_contacts(contact_ids: list[int]):
+    if not contact_ids:
+        return
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("PRAGMA foreign_keys = ON")
+        placeholders = ",".join("?" for _ in contact_ids)
+        await db.execute(f"DELETE FROM contacts WHERE id IN ({placeholders})", contact_ids)
+        await db.commit()
+
+
+async def delete_all_contacts():
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("PRAGMA foreign_keys = ON")
+        await db.execute("DELETE FROM contacts")
         await db.commit()
 
 

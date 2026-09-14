@@ -7,7 +7,25 @@ def main_menu_kb(has_accounts: bool) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=accounts_text, callback_data="accounts_menu")],
         [InlineKeyboardButton(text="💬 Диалоги", callback_data="dialogues_menu")],
         [InlineKeyboardButton(text="📨 Рассылка", callback_data="campaign_menu")],
-        [InlineKeyboardButton(text="📥 Загрузить базу", callback_data="upload_base")],
+        [InlineKeyboardButton(text="👥 База контактов", callback_data="base_menu")],
+    ])
+
+
+def base_menu_kb(count: int) -> InlineKeyboardMarkup:
+    buttons = []
+    if count > 0:
+        buttons.append([InlineKeyboardButton(text="👁 Показать базу", callback_data="base_show")])
+    buttons.append([InlineKeyboardButton(text="➕ Добавить контакты", callback_data="base_add")])
+    if count > 0:
+        buttons.append([InlineKeyboardButton(text="🧹 Очистить базу", callback_data="base_clear")])
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="back_main")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def base_clear_confirm_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⚠️ Да, очистить", callback_data="base_clear_yes")],
+        [InlineKeyboardButton(text="◀️ Отмена", callback_data="base_menu")],
     ])
 
 
