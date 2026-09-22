@@ -5,14 +5,16 @@ from aiogram.fsm.context import FSMContext
 from config import ADMIN_IDS
 from database import (
     get_accounts, get_account, get_all_contacts, get_contact,
-    create_contact, delete_contact, delete_contacts, delete_all_contacts,
+    create_contact, delete_contact, delete_contacts, delete_all_contacts, remove_user,
     set_contact_status, set_contact_auto_send, set_contact_ai_enabled,
+    get_contacts_by_bucket, set_contact_bucket,
     get_dialogue_history, add_dialogue_message, get_message, set_message_status, set_message_text,
 )
 from states import DialogueSetupStates, DraftEditStates, DialogueBulkStates
 from keyboards import (
     main_menu_kb, dialogues_list_kb, dialogues_select_kb, dialogues_bulk_all_confirm_kb,
-    choose_account_kb, opening_message_kb, opening_preview_kb, dialogue_detail_kb, cancel_kb,
+    dialogues_active_kb, choose_account_kb, opening_message_kb, opening_preview_kb,
+    dialogue_detail_kb, cancel_kb,
 )
 import userbot as ub
 import dialogue as dlg
@@ -68,6 +70,7 @@ async def dlg_view(call: CallbackQuery):
 
     mode = "🚀 автоотправка" if contact["auto_send"] else "✍️ черновики на проверку"
     status = "🟢 активен" if contact["status"] == "active" else "⏸ на паузе"
+    bucket_label = "🟢 в «Активных»" if contact.get("bucket", "active") == "active" else "🗑 в «Корзине» (неактивен)"
     ai_note = "" if contact["ai_enabled"] else " | 🚫 ИИ отключён для этого контакта"
     goal = esc(contact.get("goal")) or "—"
     who = esc(contact.get("display_name") or contact["identifier"])
@@ -76,7 +79,8 @@ async def dlg_view(call: CallbackQuery):
         f"📇 <b>{who}</b> ({esc(contact['identifier'])})\n"
         f"👤 Аккаунт: {esc(account['label']) if account else '?'}\n"
         f"🎯 Цель: {goal}\n"
-        f"Режим: {mode} | Статус: {status}{ai_note}\n\n"
+        f"Режим: {mode} | Статус: {status}\n"
+        f"Категория: {bucket_label}{ai_note}\n\n"
         f"<b>Последние сообщения:</b>\n{transcript}",
         parse_mode="HTML",
         reply_markup=dialogue_detail_kb(contact),
@@ -126,6 +130,56 @@ async def dlg_ai_on(call: CallbackQuery):
     contact_id = int(call.data.split(":", 1)[1])
     await set_contact_ai_enabled(contact_id, True)
     await dlg_view(call)
+
+
+@router.callback_query(F.data.startswith("dlg_bucket_trash:"))
+async def dlg_bucket_trash(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return await call.answer()
+    contact_id = int(call.data.split(":", 1)[1])
+    await set_contact_bucket(contact_id, "trash")
+    await dlg_view(call)
+
+
+@router.callback_query(F.data.startswith("dlg_bucket_active:"))
+async def dlg_bucket_active(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return await call.answer()
+    contact_id = int(call.data.split(":", 1)[1])
+    await set_contact_bucket(contact_id, "active")
+    await dlg_view(call)
+
+
+@router.callback_query(F.data == "dlg_active_menu")
+async def dlg_active_menu(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return await call.answer()
+    contacts = await get_contacts_by_bucket("active")
+    await call.message.edit_text(
+        f"🟢 <b>Активные ({len(contacts)})</b>\n\n"
+        f"Здесь все, с кем сейчас идёт переписка — запуск новой рассылки их не остановит. "
+        f"Если контакт не отвечает дольше настроенного тайм-аута неактивности (по "
+        f"умолчанию 24ч, меняется в настройках аккаунта), он автоматически переносится "
+        f"в «Корзину» и пропадает из этого списка — но диалог с ним не теряется, бот "
+        f"снова ответит, если он напишет.",
+        parse_mode="HTML",
+        reply_markup=dialogues_active_kb(contacts),
+    )
+
+
+@router.callback_query(F.data == "dlg_trash_menu")
+async def dlg_trash_menu(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return await call.answer()
+    contacts = await get_contacts_by_bucket("trash")
+    await call.message.edit_text(
+        f"🗑 <b>Корзина ({len(contacts)})</b>\n\n"
+        f"Контакты, переписка с которыми считается неактивной (не отвечали дольше "
+        f"тайм-аута). Диалог не удалён — если человек снова напишет, он автоматически "
+        f"вернётся в «Активные».",
+        parse_mode="HTML",
+        reply_markup=dialogues_active_kb(contacts),
+    )
 
 
 @router.callback_query(F.data.startswith("dlg_delete:"))
@@ -379,6 +433,7 @@ async def _finalize_dialogue(event, state: FSMContext, opening_text: str):
         display_name=data.get("display_name"), goal=data.get("goal"),
     )
     await add_dialogue_message(contact_id, "out", opening_text, status="sent")
+    await remove_user(identifier)
     await state.clear()
 
     confirmation = (

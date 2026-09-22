@@ -78,6 +78,8 @@ def account_detail_kb(account_id: int, connected: bool) -> InlineKeyboardMarkup:
 def instructions_chat_kb(account_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📄 Показать текущий документ", callback_data=f"instr_show:{account_id}")],
+        [InlineKeyboardButton(text="💾 Сохранить как шаблон", callback_data=f"instr_tpl_save:{account_id}")],
+        [InlineKeyboardButton(text="📋 Применить шаблон", callback_data=f"instr_tpl_apply:{account_id}")],
         [InlineKeyboardButton(text="🗑 Сбросить инструкции", callback_data=f"instr_reset:{account_id}")],
         [InlineKeyboardButton(text="✅ Готово", callback_data=f"acc_view:{account_id}")],
     ])
@@ -87,6 +89,27 @@ def instructions_reset_confirm_kb(account_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="⚠️ Да, стереть всё", callback_data=f"instr_reset_yes:{account_id}")],
         [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"instr_open:{account_id}")],
+    ])
+
+
+def templates_list_kb(account_id: int, templates: list[dict]) -> InlineKeyboardMarkup:
+    buttons = []
+    for t in templates:
+        buttons.append([
+            InlineKeyboardButton(text=f"📄 {t['name']}", callback_data=f"instr_tpl_use:{account_id}:{t['id']}"),
+            InlineKeyboardButton(text="🗑", callback_data=f"instr_tpl_del:{account_id}:{t['id']}"),
+        ])
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"instr_open:{account_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def template_apply_confirm_kb(account_id: int, template_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="⚠️ Да, заменить инструкции",
+            callback_data=f"instr_tpl_use_yes:{account_id}:{template_id}",
+        )],
+        [InlineKeyboardButton(text="◀️ Отмена", callback_data=f"instr_tpl_apply:{account_id}")],
     ])
 
 
@@ -114,6 +137,10 @@ def account_settings_kb(account_id: int, account: dict) -> InlineKeyboardMarkup:
             f"{account.get('campaign_interval_max_seconds', 900)} сек",
             "campaign_interval",
         ),
+        line(
+            f"⏱ Тайм-аут неактивности: {account.get('inactivity_timeout_hours') or 24} ч",
+            "inactivity_timeout_hours",
+        ),
         [InlineKeyboardButton(text="◀️ Назад", callback_data=f"acc_view:{account_id}")],
     ])
 
@@ -139,7 +166,12 @@ def account_delete_confirm_kb(account_id: int) -> InlineKeyboardMarkup:
 # ── dialogues ─────────────────────────────────────────────────────────────────
 
 def dialogues_list_kb(contacts: list[dict]) -> InlineKeyboardMarkup:
-    buttons = []
+    buttons = [
+        [
+            InlineKeyboardButton(text="🟢 Активные", callback_data="dlg_active_menu"),
+            InlineKeyboardButton(text="🗑 Корзина", callback_data="dlg_trash_menu"),
+        ],
+    ]
     for c in contacts:
         mark = "🟢" if c["status"] == "active" else "⏸"
         name = c.get("display_name") or c["identifier"]
@@ -149,6 +181,17 @@ def dialogues_list_kb(contacts: list[dict]) -> InlineKeyboardMarkup:
         buttons.append([InlineKeyboardButton(text="🗑 Аннулировать...", callback_data="dlg_bulk_start")])
         buttons.append([InlineKeyboardButton(text="🗑 Аннулировать все", callback_data="dlg_bulk_all")])
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="back_main")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def dialogues_active_kb(contacts: list[dict]) -> InlineKeyboardMarkup:
+    """Used for both the «Активные» and «Корзина» filtered views — just a
+    plain list of contacts (tap to open the shared detail screen)."""
+    buttons = []
+    for c in contacts:
+        name = c.get("display_name") or c["identifier"]
+        buttons.append([InlineKeyboardButton(text=name, callback_data=f"dlg_view:{c['id']}")])
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="dialogues_menu")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -210,7 +253,12 @@ def dialogue_detail_kb(contact: dict) -> InlineKeyboardMarkup:
         if contact["auto_send"] else
         InlineKeyboardButton(text="🚀 Включить автоотправку", callback_data=f"dlg_mode_auto:{contact['id']}")
     )
-    rows = [[pause_btn], [mode_btn]]
+    bucket_btn = (
+        InlineKeyboardButton(text="↩️ Вернуть в «Активные»", callback_data=f"dlg_bucket_active:{contact['id']}")
+        if contact.get("bucket", "active") == "trash" else
+        InlineKeyboardButton(text="🗑 Убрать в «Корзину»", callback_data=f"dlg_bucket_trash:{contact['id']}")
+    )
+    rows = [[pause_btn], [mode_btn], [bucket_btn]]
     if not contact["ai_enabled"]:
         rows.append([InlineKeyboardButton(text="🤖 Включить ИИ снова", callback_data=f"dlg_ai_on:{contact['id']}")])
     rows.append([InlineKeyboardButton(text="🗑 Удалить диалог", callback_data=f"dlg_delete:{contact['id']}")])

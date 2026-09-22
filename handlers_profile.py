@@ -6,10 +6,12 @@ from config import ADMIN_IDS
 from database import (
     get_account, get_contact, update_account_profile,
     set_contact_ai_enabled, set_contact_status,
+    create_template, get_templates, get_template, delete_template,
 )
-from states import InstructionsChatStates, QuickSettingStates
+from states import InstructionsChatStates, QuickSettingStates, TemplateStates
 from keyboards import (
     account_settings_kb, instructions_chat_kb, instructions_reset_confirm_kb, setting_edit_kb,
+    templates_list_kb, template_apply_confirm_kb, cancel_kb,
 )
 import instructions_chat
 import dialogue as dlg
@@ -158,6 +160,107 @@ async def instr_reset_yes(call: CallbackQuery, state: FSMContext):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#  ШАБЛОНЫ ИНСТРУКЦИЙ
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.callback_query(F.data.startswith("instr_tpl_save:"))
+async def instr_tpl_save(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return await call.answer()
+    account_id = int(call.data.split(":", 1)[1])
+    account = await get_account(account_id)
+    if not account:
+        return await call.answer("Аккаунт не найден", show_alert=True)
+    if not account.get("custom_instructions"):
+        return await call.answer("Сначала задайте инструкции для этого аккаунта", show_alert=True)
+    await state.set_state(TemplateStates.waiting_name)
+    await state.update_data(tpl_account_id=account_id)
+    await call.message.edit_text(
+        "💾 <b>Сохранить как шаблон</b>\n\nВведите название шаблона:",
+        parse_mode="HTML", reply_markup=cancel_kb(),
+    )
+
+
+@router.message(TemplateStates.waiting_name)
+async def tpl_got_name(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    name = (message.text or "").strip()
+    if not name:
+        return await message.answer("Введите непустое название.")
+    data = await state.get_data()
+    account_id = data["tpl_account_id"]
+    account = await get_account(account_id)
+    await create_template(name, account.get("custom_instructions") or "")
+    await state.clear()
+    await message.answer(
+        f"✅ Шаблон «{esc(name)}» сохранён. Теперь его можно применить к любому аккаунту.",
+        parse_mode="HTML", reply_markup=instructions_chat_kb(account_id),
+    )
+
+
+@router.callback_query(F.data.startswith("instr_tpl_apply:"))
+async def instr_tpl_apply(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return await call.answer()
+    account_id = int(call.data.split(":", 1)[1])
+    templates = await get_templates()
+    if not templates:
+        return await call.answer("Шаблонов пока нет — сначала сохраните один", show_alert=True)
+    await call.message.edit_text(
+        "📋 <b>Шаблоны инструкций</b>\n\n"
+        "Выберите, чтобы применить к этому аккаунту (текущие инструкции будут заменены):",
+        parse_mode="HTML",
+        reply_markup=templates_list_kb(account_id, templates),
+    )
+
+
+@router.callback_query(F.data.startswith("instr_tpl_use:"))
+async def instr_tpl_use(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return await call.answer()
+    _, account_id, template_id = call.data.split(":")
+    await call.message.edit_text(
+        "⚠️ Заменить текущие инструкции этого аккаунта содержимым шаблона? "
+        "Отменить будет нельзя (можно будет только задать заново).",
+        reply_markup=template_apply_confirm_kb(int(account_id), int(template_id)),
+    )
+
+
+@router.callback_query(F.data.startswith("instr_tpl_use_yes:"))
+async def instr_tpl_use_yes(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return await call.answer()
+    _, account_id, template_id = call.data.split(":")
+    account_id, template_id = int(account_id), int(template_id)
+    tpl = await get_template(template_id)
+    if not tpl:
+        return await call.answer("Шаблон не найден", show_alert=True)
+    await update_account_profile(account_id, custom_instructions=tpl["content"], profile_ready=1)
+    await call.answer("Шаблон применён")
+    await call.message.edit_text(
+        f"✅ Инструкции аккаунта заменены шаблоном «{esc(tpl['name'])}».",
+        parse_mode="HTML", reply_markup=instructions_chat_kb(account_id),
+    )
+
+
+@router.callback_query(F.data.startswith("instr_tpl_del:"))
+async def instr_tpl_del(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return await call.answer()
+    _, account_id, template_id = call.data.split(":")
+    await delete_template(int(template_id))
+    await call.answer("Шаблон удалён")
+    account_id = int(account_id)
+    templates = await get_templates()
+    if not templates:
+        return await call.message.edit_text(
+            "Шаблонов больше нет.", reply_markup=instructions_chat_kb(account_id),
+        )
+    await call.message.edit_reply_markup(reply_markup=templates_list_kb(account_id, templates))
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #  НАСТРОЙКИ (жёсткие правила, тайминг, уведомления)
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -251,6 +354,15 @@ _SETTINGS = {
             "например <code>300-900</code> (5-15 минут). «-» — по умолчанию:"
         ),
         "parser": _range_parser("campaign_interval_min_seconds", "campaign_interval_max_seconds"),
+    },
+    "inactivity_timeout_hours": {
+        "title": "Тайм-аут неактивности",
+        "prompt": (
+            "Через сколько часов без ответа от собеседника переносить диалог из «Активных» "
+            "в «Корзину» (переписка не теряется — просто пропадает из списка активных). "
+            "Число часов, по умолчанию 24:"
+        ),
+        "parser": _int_parser("inactivity_timeout_hours"),
     },
 }
 

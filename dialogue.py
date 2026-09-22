@@ -9,7 +9,7 @@ from pyrogram import enums
 from config import ANTHROPIC_API_KEY, AI_MODEL
 from database import (
     get_contact, get_contact_by_identifier, get_account,
-    add_dialogue_message, get_dialogue_history, set_contact_status,
+    add_dialogue_message, get_dialogue_history, set_contact_status, set_contact_bucket,
     count_out_messages_for_contact, count_out_messages_today_for_account,
 )
 import userbot as ub
@@ -356,6 +356,10 @@ async def handle_incoming_message(account_id: int, client, message):
 
     if not contact or contact["status"] != "active":
         return
+
+    if contact.get("bucket") == "trash":
+        await set_contact_bucket(contact["id"], "active")
+        contact["bucket"] = "active"
 
     await add_dialogue_message(contact["id"], "in", message.text)
 

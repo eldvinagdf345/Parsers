@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta
+
 import aiosqlite
 from config import DB_PATH
 
@@ -26,6 +28,15 @@ _ACCOUNT_PROFILE_COLUMNS = [
     ("custom_instructions", "TEXT"),
     ("campaign_interval_min_seconds", "INTEGER DEFAULT 300"),
     ("campaign_interval_max_seconds", "INTEGER DEFAULT 900"),
+    ("inactivity_timeout_hours", "INTEGER DEFAULT 24"),
+]
+
+# Added on top of the base `contacts` table for the "Активные"/"Корзина"
+# categorization — 'active' while the conversation is live, 'trash' once the
+# contact goes quiet past the account's inactivity timeout. Migrated the same
+# idempotent way as the account profile columns.
+_CONTACT_COLUMNS = [
+    ("bucket", "TEXT DEFAULT 'active'"),
 ]
 
 
@@ -35,6 +46,14 @@ async def _ensure_account_columns(db):
     for name, decl in _ACCOUNT_PROFILE_COLUMNS:
         if name not in existing:
             await db.execute(f"ALTER TABLE accounts ADD COLUMN {name} {decl}")
+
+
+async def _ensure_contact_columns(db):
+    cursor = await db.execute("PRAGMA table_info(contacts)")
+    existing = {row[1] for row in await cursor.fetchall()}
+    for name, decl in _CONTACT_COLUMNS:
+        if name not in existing:
+            await db.execute(f"ALTER TABLE contacts ADD COLUMN {name} {decl}")
 
 
 async def init_db():
@@ -69,10 +88,12 @@ async def init_db():
                 ai_enabled INTEGER DEFAULT 1,
                 auto_send INTEGER DEFAULT 1,
                 status TEXT DEFAULT 'active',
+                bucket TEXT DEFAULT 'active',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(account_id, identifier)
             )
         """)
+        await _ensure_contact_columns(db)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS dialogue_messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -80,6 +101,14 @@ async def init_db():
                 direction TEXT NOT NULL,
                 text TEXT NOT NULL,
                 status TEXT DEFAULT 'sent',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS instruction_templates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                content TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -119,6 +148,14 @@ async def get_all_users() -> list:
 async def clear_users():
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM parsed_users")
+        await db.commit()
+
+
+async def remove_user(identifier: str):
+    """Drops one identifier from the base — called once the bot has actually
+    written to them, so they aren't offered again in a future campaign."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM parsed_users WHERE username = ?", (identifier,))
         await db.commit()
 
 
@@ -213,11 +250,11 @@ async def create_contact(
 ) -> int:
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
-            INSERT INTO contacts (account_id, identifier, display_name, goal, auto_send, status)
-            VALUES (?, ?, ?, ?, ?, 'active')
+            INSERT INTO contacts (account_id, identifier, display_name, goal, auto_send, status, bucket)
+            VALUES (?, ?, ?, ?, ?, 'active', 'active')
             ON CONFLICT(account_id, identifier) DO UPDATE SET
                 display_name=excluded.display_name, goal=excluded.goal,
-                auto_send=excluded.auto_send, status='active'
+                auto_send=excluded.auto_send, status='active', bucket='active'
         """, (account_id, identifier, display_name, goal, int(auto_send)))
         await db.commit()
         cursor = await db.execute(
@@ -292,6 +329,103 @@ async def delete_all_contacts():
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("PRAGMA foreign_keys = ON")
         await db.execute("DELETE FROM contacts")
+        await db.commit()
+
+
+# ── "Активные" / "Корзина" ──────────────────────────────────────────────────
+
+async def get_contacts_by_bucket(bucket: str) -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM contacts WHERE bucket=? ORDER BY created_at DESC", (bucket,)
+        )
+        rows = await cursor.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def set_contact_bucket(contact_id: int, bucket: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE contacts SET bucket=? WHERE id=?", (bucket, contact_id))
+        await db.commit()
+
+
+async def set_contacts_bucket(contact_ids: list[int], bucket: str):
+    if not contact_ids:
+        return
+    async with aiosqlite.connect(DB_PATH) as db:
+        placeholders = ",".join("?" for _ in contact_ids)
+        await db.execute(
+            f"UPDATE contacts SET bucket=? WHERE id IN ({placeholders})", [bucket, *contact_ids]
+        )
+        await db.commit()
+
+
+async def get_stale_active_contacts() -> list[dict]:
+    """Active contacts whose last message was outbound (we wrote, they never
+    replied) longer ago than the owning account's inactivity timeout."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("""
+            SELECT c.id, c.account_id, c.identifier, c.display_name,
+                   COALESCE(a.inactivity_timeout_hours, 24) AS timeout_hours,
+                   lm.direction AS last_direction, lm.created_at AS last_at
+            FROM contacts c
+            JOIN accounts a ON a.id = c.account_id
+            LEFT JOIN dialogue_messages lm ON lm.id = (
+                SELECT dm.id FROM dialogue_messages dm
+                WHERE dm.contact_id = c.id
+                ORDER BY dm.id DESC LIMIT 1
+            )
+            WHERE c.bucket = 'active'
+        """)
+        rows = await cursor.fetchall()
+
+    now = datetime.utcnow()
+    stale = []
+    for r in rows:
+        if r["last_direction"] != "out" or not r["last_at"]:
+            continue
+        try:
+            last_at = datetime.strptime(r["last_at"], "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            continue
+        timeout_hours = r["timeout_hours"] or 24
+        if now - last_at >= timedelta(hours=timeout_hours):
+            stale.append(dict(r))
+    return stale
+
+
+# ── шаблоны инструкций ───────────────────────────────────────────────────────
+
+async def create_template(name: str, content: str) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "INSERT INTO instruction_templates (name, content) VALUES (?, ?)", (name, content)
+        )
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def get_templates() -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM instruction_templates ORDER BY created_at DESC")
+        rows = await cursor.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def get_template(template_id: int) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM instruction_templates WHERE id=?", (template_id,))
+        row = await cursor.fetchone()
+    return dict(row) if row else None
+
+
+async def delete_template(template_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM instruction_templates WHERE id=?", (template_id,))
         await db.commit()
 
 

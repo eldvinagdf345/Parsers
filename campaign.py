@@ -3,7 +3,7 @@ import logging
 import random
 
 from database import (
-    get_account, get_contact_by_identifier, create_contact, add_dialogue_message,
+    get_account, get_contact_by_identifier, create_contact, add_dialogue_message, remove_user,
 )
 import userbot as ub
 import dialogue as dlg
@@ -81,6 +81,7 @@ async def _run(account_id: int, usernames: list[str]):
 
             contact_id = await create_contact(account_id=account_id, identifier=identifier)
             await add_dialogue_message(contact_id, "out", opening, status="sent")
+            await remove_user(identifier)
             _progress[account_id]["sent"] += 1
 
             lo = account.get("campaign_interval_min_seconds") or 300

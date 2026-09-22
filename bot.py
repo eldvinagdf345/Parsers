@@ -9,6 +9,7 @@ from config import BOT_TOKEN, ADMIN_IDS
 from database import init_db, get_accounts
 import userbot as ub
 import dialogue
+import activity_monitor
 from handlers_main import router as main_router
 from handlers_accounts import router as accounts_router
 from handlers_profile import router as profile_router
@@ -42,6 +43,8 @@ async def main():
 
     started = await ub.start_saved_accounts()
     logger.info("Reconnected %d saved account(s)", started)
+
+    asyncio.create_task(activity_monitor.run())
 
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(accounts_router)

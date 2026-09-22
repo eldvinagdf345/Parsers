@@ -38,3 +38,7 @@ class DialogueBulkStates(StatesGroup):
     """Multi-select mode in the dialogues list for annulling several
     contacts at once. Selected ids are kept in FSM data under 'selected_ids'."""
     selecting = State()
+
+
+class TemplateStates(StatesGroup):
+    waiting_name = State()
