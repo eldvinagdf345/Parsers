@@ -392,8 +392,17 @@ async def handle_incoming_message(account_id: int, client, message):
     history = await get_dialogue_history(contact["id"], limit=20)
     try:
         result = await generate_reply(account, contact, history)
-    except Exception:
+    except Exception as e:
         logger.exception("AI reply generation failed for contact %s", contact["id"])
+        await set_contact_status(contact["id"], "paused")
+        await _notify(
+            account,
+            f"⚠️ <b>Диалог остановлен — ошибка ИИ</b>\n👤 Аккаунт: {esc(account['label'])}\n📇 {who}\n"
+            f"Ошибка: {esc(e)}\n\n<b>Сообщение:</b> {esc(message.text)}",
+        )
+        await _notify_stop_card(
+            contact, message.text, "unknown", f"техническая ошибка при генерации ответа: {e}",
+        )
         return
 
     if result["escalate"]:
