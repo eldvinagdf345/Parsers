@@ -422,8 +422,17 @@ async def handle_incoming_message(account_id: int, client, message):
     if contact["auto_send"]:
         try:
             await _dispatch_message(client, contact["identifier"], reply_text, account, full_delay=True)
-        except Exception:
+        except Exception as e:
             logger.exception("Failed to auto-send reply to contact %s", contact["id"])
+            await set_contact_status(contact["id"], "paused")
+            msg_id = await add_dialogue_message(contact["id"], "out", reply_text, status="draft")
+            await _notify(
+                account,
+                f"⚠️ <b>Диалог остановлен — не удалось отправить ответ</b>\n"
+                f"👤 Аккаунт: {esc(account['label'])}\n📇 {who}\nОшибка: {esc(e)}\n\n"
+                f"<b>Сообщение:</b> {esc(message.text)}",
+            )
+            await _notify_admins_draft(contact, message.text, reply_text, msg_id)
             return
         await add_dialogue_message(contact["id"], "out", reply_text, status="sent")
     else:
