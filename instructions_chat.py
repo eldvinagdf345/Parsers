@@ -1,7 +1,7 @@
 from anthropic import AsyncAnthropic
 
 from config import ANTHROPIC_API_KEY, AI_MODEL
-from database import get_account, update_account_profile
+from database import get_account, update_account_profile, propagate_group_instructions
 
 _ai_client = AsyncAnthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
 
@@ -47,7 +47,10 @@ async def update_instructions(account_id: int, user_message: str) -> dict:
     text = "".join(b.text for b in resp.content if b.type == "text").strip()
 
     document, reply = _parse(text, current, user_message)
-    await update_account_profile(account_id, custom_instructions=document, profile_ready=1)
+    if account.get("group_id"):
+        await propagate_group_instructions(account["group_id"], document)
+    else:
+        await update_account_profile(account_id, custom_instructions=document, profile_ready=1)
     return {"document": document, "reply": reply}
 
 

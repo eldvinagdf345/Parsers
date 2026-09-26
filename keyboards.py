@@ -49,28 +49,49 @@ def accounts_list_kb(accounts: list[dict]) -> InlineKeyboardMarkup:
     buttons = []
     for acc in accounts:
         status = "🟢" if acc["connected"] else "🔴"
+        link_mark = "🔗 " if acc.get("group_id") else ""
         buttons.append([InlineKeyboardButton(
-            text=f"{status} {acc['label']} ({acc['phone']})",
+            text=f"{status} {link_mark}{acc['label']} ({acc['phone']})",
             callback_data=f"acc_view:{acc['id']}",
         )])
     buttons.append([InlineKeyboardButton(text="➕ Добавить аккаунт", callback_data="acc_add")])
+    if len(accounts) >= 2:
+        buttons.append([InlineKeyboardButton(text="🔗 Связать аккаунты", callback_data="acc_link_start")])
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="back_main")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def account_detail_kb(account_id: int, connected: bool) -> InlineKeyboardMarkup:
+def account_detail_kb(account_id: int, connected: bool, grouped: bool = False) -> InlineKeyboardMarkup:
     toggle = (
         InlineKeyboardButton(text="🔌 Отключить", callback_data=f"acc_disconnect:{account_id}")
         if connected else
         InlineKeyboardButton(text="🔄 Переподключить", callback_data=f"acc_reconnect:{account_id}")
     )
-    return InlineKeyboardMarkup(inline_keyboard=[
+    rows = [
         [InlineKeyboardButton(text="📝 Задать инструкции", callback_data=f"instr_open:{account_id}")],
         [InlineKeyboardButton(text="⚙️ Настройки", callback_data=f"acc_settings:{account_id}")],
         [toggle],
-        [InlineKeyboardButton(text="🗑 Удалить аккаунт", callback_data=f"acc_delete:{account_id}")],
-        [InlineKeyboardButton(text="◀️ К списку", callback_data="accounts_menu")],
-    ])
+    ]
+    if grouped:
+        rows.append([InlineKeyboardButton(text="🔓 Отвязать от группы", callback_data=f"acc_unlink:{account_id}")])
+    rows.append([InlineKeyboardButton(text="🗑 Удалить аккаунт", callback_data=f"acc_delete:{account_id}")])
+    rows.append([InlineKeyboardButton(text="◀️ К списку", callback_data="accounts_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def accounts_link_select_kb(accounts: list[dict], selected_ids: set[int]) -> InlineKeyboardMarkup:
+    buttons = []
+    for acc in accounts:
+        mark = "✅" if acc["id"] in selected_ids else "⬜"
+        buttons.append([InlineKeyboardButton(
+            text=f"{mark} {acc['label']} ({acc['phone']})",
+            callback_data=f"acc_link_toggle:{acc['id']}",
+        )])
+    buttons.append([InlineKeyboardButton(
+        text=f"🔗 Связать выбранные ({len(selected_ids)})", callback_data="acc_link_confirm",
+    )])
+    buttons.append([InlineKeyboardButton(text="◀️ Отмена", callback_data="accounts_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 # ── свободный чат инструкций ─────────────────────────────────────────────────

@@ -29,6 +29,7 @@ _ACCOUNT_PROFILE_COLUMNS = [
     ("campaign_interval_min_seconds", "INTEGER DEFAULT 300"),
     ("campaign_interval_max_seconds", "INTEGER DEFAULT 900"),
     ("inactivity_timeout_hours", "INTEGER DEFAULT 24"),
+    ("group_id", "INTEGER"),
 ]
 
 # Added on top of the base `contacts` table for the "Активные"/"Корзина"
@@ -109,6 +110,12 @@ async def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 content TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS account_groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -427,6 +434,56 @@ async def delete_template(template_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM instruction_templates WHERE id=?", (template_id,))
         await db.commit()
+
+
+# ── связки аккаунтов (общие инструкции) ─────────────────────────────────────
+
+async def create_account_group() -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("INSERT INTO account_groups DEFAULT VALUES")
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def delete_account_group(group_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE accounts SET group_id=NULL WHERE group_id=?", (group_id,))
+        await db.execute("DELETE FROM account_groups WHERE id=?", (group_id,))
+        await db.commit()
+
+
+async def set_account_group(account_id: int, group_id: int | None):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE accounts SET group_id=? WHERE id=?", (group_id, account_id))
+        await db.commit()
+
+
+async def get_accounts_in_group(group_id: int) -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM accounts WHERE group_id=? ORDER BY created_at", (group_id,))
+        rows = await cursor.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def propagate_group_instructions(group_id: int, content: str | None):
+    """Pushes one shared instructions document to every account in the group —
+    used so that a fix learned on one linked account (e.g. via the unknown-
+    pattern flow) is applied identically on all of them."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE accounts SET custom_instructions=?, profile_ready=? WHERE group_id=?",
+            (content, 1 if content else 0, group_id),
+        )
+        await db.commit()
+
+
+async def dissolve_group_if_alone(group_id: int):
+    """Cleans up a group left with 0-1 members after an unlink — a 'group' of
+    one account is meaningless, so just dissolve it back to standalone."""
+    members = await get_accounts_in_group(group_id)
+    if len(members) <= 1:
+        await delete_account_group(group_id)
 
 
 async def add_dialogue_message(contact_id: int, direction: str, text: str, status: str = "sent") -> int:

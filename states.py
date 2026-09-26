@@ -42,3 +42,9 @@ class DialogueBulkStates(StatesGroup):
 
 class TemplateStates(StatesGroup):
     waiting_name = State()
+
+
+class AccountLinkStates(StatesGroup):
+    """Multi-select mode for linking several accounts into one group that
+    shares (and keeps in sync) a single instructions document."""
+    selecting = State()

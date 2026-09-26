@@ -417,15 +417,9 @@ async def handle_incoming_message(account_id: int, client, message):
             logger.exception("Failed to auto-send reply to contact %s", contact["id"])
             return
         await add_dialogue_message(contact["id"], "out", reply_text, status="sent")
-        await _notify(
-            account,
-            f"💬 <b>{who}</b>: {esc(message.text)}\n\n➡️ Ответ отправлен автоматически:\n{esc(reply_text)}",
-        )
     else:
+        # Черновики на проверку идут админам напрямую (см. _notify_admins_draft) —
+        # канал уведомлений (_notify) намеренно не трогаем здесь: он предназначен
+        # только для случаев остановки диалога, а не для каждого сообщения.
         msg_id = await add_dialogue_message(contact["id"], "out", reply_text, status="draft")
         await _notify_admins_draft(contact, message.text, reply_text, msg_id)
-        await _notify(
-            account,
-            f"💬 <b>Новое сообщение</b>\n👤 Аккаунт: {esc(account['label'])}\n📇 {who}\n\n"
-            f"{esc(message.text)}\n\n<i>Черновик ответа отправлен вам в бот на проверку.</i>",
-        )

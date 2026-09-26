@@ -7,6 +7,7 @@ from database import (
     get_account, get_contact, update_account_profile,
     set_contact_ai_enabled, set_contact_status,
     create_template, get_templates, get_template, delete_template,
+    propagate_group_instructions,
 )
 from states import InstructionsChatStates, QuickSettingStates, TemplateStates
 from keyboards import (
@@ -149,7 +150,11 @@ async def instr_reset_yes(call: CallbackQuery, state: FSMContext):
     if not is_admin(call.from_user.id):
         return await call.answer()
     account_id = int(call.data.split(":", 1)[1])
-    await update_account_profile(account_id, custom_instructions=None)
+    account = await get_account(account_id)
+    if account and account.get("group_id"):
+        await propagate_group_instructions(account["group_id"], None)
+    else:
+        await update_account_profile(account_id, custom_instructions=None)
     await call.answer("Инструкции очищены")
     await state.set_state(InstructionsChatStates.chatting)
     await state.update_data(instr_account_id=account_id)
@@ -236,7 +241,11 @@ async def instr_tpl_use_yes(call: CallbackQuery):
     tpl = await get_template(template_id)
     if not tpl:
         return await call.answer("Шаблон не найден", show_alert=True)
-    await update_account_profile(account_id, custom_instructions=tpl["content"], profile_ready=1)
+    account = await get_account(account_id)
+    if account and account.get("group_id"):
+        await propagate_group_instructions(account["group_id"], tpl["content"])
+    else:
+        await update_account_profile(account_id, custom_instructions=tpl["content"], profile_ready=1)
     await call.answer("Шаблон применён")
     await call.message.edit_text(
         f"✅ Инструкции аккаунта заменены шаблоном «{esc(tpl['name'])}».",
