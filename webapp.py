@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 import campaign
@@ -16,7 +16,7 @@ from utils import normalize_identifier, resolve_target
 
 app = FastAPI(title="Multiplex")
 
-STATIC_DIR = Path(__file__).parent / "web" / "static"
+INDEX_FILE = Path(__file__).parent / "web_index.html"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -645,8 +645,11 @@ async def ws_events(websocket: WebSocket):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  СТАТИКА (фронтенд)
+#  ФРОНТЕНД (один файл, без вложенных папок — проще загрузить на GitHub)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-if STATIC_DIR.exists():
-    app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
+@app.get("/")
+async def index():
+    if not INDEX_FILE.exists():
+        raise HTTPException(500, "web_index.html не найден рядом с webapp.py")
+    return FileResponse(INDEX_FILE)
