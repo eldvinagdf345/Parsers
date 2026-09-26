@@ -74,6 +74,7 @@ async def _ensure_parsed_user_columns(db):
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("PRAGMA foreign_keys = ON")
+        await db.execute("PRAGMA journal_mode = WAL")
         await db.execute("""
             CREATE TABLE IF NOT EXISTS parsed_users (
                 username TEXT PRIMARY KEY,
@@ -329,6 +330,24 @@ async def count_out_messages_for_contact(contact_id: int) -> int:
         )
         row = await cursor.fetchone()
     return row[0] if row else 0
+
+
+async def count_out_messages_today_total() -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("""
+            SELECT COUNT(*) FROM dialogue_messages
+            WHERE direction='out' AND status IN ('sent','draft') AND created_at >= date('now')
+        """)
+        row = await cursor.fetchone()
+    return row[0] if row else 0
+
+
+async def get_paused_contacts() -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM contacts WHERE status='paused' ORDER BY created_at DESC")
+        rows = await cursor.fetchall()
+    return [dict(r) for r in rows]
 
 
 async def count_out_messages_today_for_account(account_id: int) -> int:
@@ -608,6 +627,14 @@ async def get_message(message_id: int) -> dict | None:
         cursor = await db.execute("SELECT * FROM dialogue_messages WHERE id=?", (message_id,))
         row = await cursor.fetchone()
     return dict(row) if row else None
+
+
+async def get_pending_drafts() -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM dialogue_messages WHERE status='draft' ORDER BY id DESC")
+        rows = await cursor.fetchall()
+    return [dict(r) for r in rows]
 
 
 async def set_message_status(message_id: int, status: str):

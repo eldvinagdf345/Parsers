@@ -7,6 +7,7 @@ from database import (
 )
 import userbot as ub
 import dialogue as dlg
+import events
 from utils import normalize_identifier, resolve_target
 
 logger = logging.getLogger(__name__)
@@ -83,6 +84,7 @@ async def _run(account_id: int, usernames: list[str]):
             await add_dialogue_message(contact_id, "out", opening, status="sent")
             await remove_user(identifier)
             _progress[account_id]["sent"] += 1
+            events.emit("out", account=account.get("label"), contact=identifier, text=opening)
 
             lo = account.get("campaign_interval_min_seconds") or 300
             hi = account.get("campaign_interval_max_seconds") or 900

@@ -2,14 +2,16 @@ import asyncio
 import logging
 import os
 
+import uvicorn
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from config import BOT_TOKEN, ADMIN_IDS
+from config import BOT_TOKEN, ADMIN_IDS, WEB_PORT
 from database import init_db, get_accounts
 import userbot as ub
 import dialogue
 import activity_monitor
+import webapp
 from handlers_main import router as main_router
 from handlers_accounts import router as accounts_router
 from handlers_profile import router as profile_router
@@ -45,6 +47,10 @@ async def main():
     logger.info("Reconnected %d saved account(s)", started)
 
     asyncio.create_task(activity_monitor.run())
+
+    web_config = uvicorn.Config(webapp.app, host="0.0.0.0", port=WEB_PORT, log_level="info")
+    asyncio.create_task(uvicorn.Server(web_config).serve())
+    logger.info("Web dashboard listening on port %d", WEB_PORT)
 
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(accounts_router)

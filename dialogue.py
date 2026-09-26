@@ -13,6 +13,7 @@ from database import (
     count_out_messages_for_contact, count_out_messages_today_for_account,
 )
 import userbot as ub
+import events
 from utils import resolve_target, esc
 
 logger = logging.getLogger(__name__)
@@ -174,9 +175,11 @@ async def check_hard_stop(account: dict, contact: dict, incoming_text: str) -> s
 
 # ── отправка с имитацией «живого» набора текста ─────────────────────────────
 
-async def _dispatch_message(client, identifier: str, text: str, account: dict, full_delay: bool):
+async def _dispatch_message(client, identifier: str, text: str, account: dict, full_delay: bool, who: str | None = None):
     target = resolve_target(identifier)
     typing_time = min(max(len(text) / 12, 1.0), 6.0)
+    label = who or identifier
+    acc_label = account.get("label")
 
     if full_delay:
         lo = account.get("delay_min_seconds") or 20
@@ -184,14 +187,17 @@ async def _dispatch_message(client, identifier: str, text: str, account: dict, f
         if hi < lo:
             hi = lo
         delay = random.uniform(lo, hi)
+        events.emit("system", account=acc_label, contact=label, text="ожидает, прежде чем ответить")
         await asyncio.sleep(max(delay - typing_time, 0))
 
     try:
         await client.send_chat_action(target, enums.ChatAction.TYPING)
     except Exception:
         pass
+    events.emit("system", account=acc_label, contact=label, text="печатает…")
     await asyncio.sleep(typing_time)
     await client.send_message(target, text)
+    events.emit("out", account=acc_label, contact=label, text=text)
 
 
 async def send_text(account_id: int, identifier: str, text: str):
@@ -200,7 +206,9 @@ async def send_text(account_id: int, identifier: str, text: str):
     if not client:
         raise RuntimeError("Аккаунт не подключён")
     account = await get_account(account_id) or {}
-    await _dispatch_message(client, identifier, text, account, full_delay=False)
+    contact = await get_contact_by_identifier(account_id, identifier)
+    who = contact.get("display_name") or identifier if contact else identifier
+    await _dispatch_message(client, identifier, text, account, full_delay=False, who=who)
 
 
 # ── уведомления ──────────────────────────────────────────────────────────────
@@ -288,8 +296,11 @@ async def retry_after_instruction(contact_id: int) -> str:
     who = esc(contact.get("display_name") or contact["identifier"])
     incoming = next((m["text"] for m in reversed(history) if m["direction"] == "in"), "")
 
+    who_plain = contact.get("display_name") or contact["identifier"]
+
     if result["escalate"]:
         await set_contact_status(contact_id, "paused")
+        events.emit("warn", account=account.get("label"), contact=who_plain, text=result["reason"])
         await _notify_stop_card(contact, incoming, result["stop_type"], result["reason"])
         return f"⚠️ Даже с новой инструкцией ИИ решил остановиться: {esc(result['reason'])}"
 
@@ -302,7 +313,7 @@ async def retry_after_instruction(contact_id: int) -> str:
         if not client:
             return "⚠️ Аккаунт отключён, не удалось отправить ответ."
         try:
-            await _dispatch_message(client, contact["identifier"], reply_text, account, full_delay=True)
+            await _dispatch_message(client, contact["identifier"], reply_text, account, full_delay=True, who=who_plain)
         except Exception:
             logger.exception("retry_after_instruction: failed to send reply for contact %s", contact_id)
             return "⚠️ Не удалось отправить ответ."
@@ -310,6 +321,7 @@ async def retry_after_instruction(contact_id: int) -> str:
         return f"✅ Диалог с {who} возобновлён, ответ отправлен."
 
     msg_id = await add_dialogue_message(contact_id, "out", reply_text, status="draft")
+    events.emit("system", account=account.get("label"), contact=who_plain, text="черновик отправлен на проверку")
     await _notify_admins_draft(contact, incoming, reply_text, msg_id)
     return f"✅ Диалог с {who} возобновлён, черновик ответа отправлен вам на проверку."
 
@@ -357,11 +369,17 @@ async def handle_incoming_message(account_id: int, client, message):
     if not contact or contact["status"] != "active":
         return
 
+    account = await get_account(account_id)
+    acc_label = account.get("label") if account else None
+    who_plain = contact.get("display_name") or contact["identifier"]
+
     if contact.get("bucket") == "trash":
         await set_contact_bucket(contact["id"], "active")
         contact["bucket"] = "active"
+        events.emit("system", account=acc_label, contact=who_plain, text="возвращён в «Активные»")
 
     await add_dialogue_message(contact["id"], "in", message.text)
+    events.emit("in", account=acc_label, contact=who_plain, text=message.text[:160])
 
     try:
         await asyncio.sleep(random.uniform(1, 3))
@@ -372,15 +390,15 @@ async def handle_incoming_message(account_id: int, client, message):
     if not contact["ai_enabled"] or not _ai_client:
         return
 
-    account = await get_account(account_id)
     if not account:
         return
 
-    who = esc(contact.get("display_name") or contact["identifier"])
+    who = esc(who_plain)
 
     hard_reason = await check_hard_stop(account, contact, message.text)
     if hard_reason:
         await set_contact_status(contact["id"], "paused")
+        events.emit("warn", account=acc_label, contact=who_plain, text=hard_reason)
         await _notify(
             account,
             f"⏸ <b>Диалог остановлен</b>\n👤 Аккаунт: {esc(account['label'])}\n📇 {who}\n"
@@ -395,6 +413,7 @@ async def handle_incoming_message(account_id: int, client, message):
     except Exception as e:
         logger.exception("AI reply generation failed for contact %s", contact["id"])
         await set_contact_status(contact["id"], "paused")
+        events.emit("warn", account=acc_label, contact=who_plain, text=f"ошибка ИИ: {e}")
         await _notify(
             account,
             f"⚠️ <b>Диалог остановлен — ошибка ИИ</b>\n👤 Аккаунт: {esc(account['label'])}\n📇 {who}\n"
@@ -407,6 +426,7 @@ async def handle_incoming_message(account_id: int, client, message):
 
     if result["escalate"]:
         await set_contact_status(contact["id"], "paused")
+        events.emit("warn", account=acc_label, contact=who_plain, text=result["reason"])
         await _notify(
             account,
             f"⏸ <b>Диалог остановлен (решение ИИ)</b>\n👤 Аккаунт: {esc(account['label'])}\n📇 {who}\n"
@@ -421,11 +441,12 @@ async def handle_incoming_message(account_id: int, client, message):
 
     if contact["auto_send"]:
         try:
-            await _dispatch_message(client, contact["identifier"], reply_text, account, full_delay=True)
+            await _dispatch_message(client, contact["identifier"], reply_text, account, full_delay=True, who=who_plain)
         except Exception as e:
             logger.exception("Failed to auto-send reply to contact %s", contact["id"])
             await set_contact_status(contact["id"], "paused")
             msg_id = await add_dialogue_message(contact["id"], "out", reply_text, status="draft")
+            events.emit("warn", account=acc_label, contact=who_plain, text=f"не удалось отправить ответ: {e}")
             await _notify(
                 account,
                 f"⚠️ <b>Диалог остановлен — не удалось отправить ответ</b>\n"
@@ -440,4 +461,5 @@ async def handle_incoming_message(account_id: int, client, message):
         # канал уведомлений (_notify) намеренно не трогаем здесь: он предназначен
         # только для случаев остановки диалога, а не для каждого сообщения.
         msg_id = await add_dialogue_message(contact["id"], "out", reply_text, status="draft")
+        events.emit("system", account=acc_label, contact=who_plain, text="черновик отправлен на проверку")
         await _notify_admins_draft(contact, message.text, reply_text, msg_id)
