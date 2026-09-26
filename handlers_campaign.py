@@ -3,7 +3,7 @@ from aiogram.types import CallbackQuery
 from aiogram.fsm.context import FSMContext
 
 from config import ADMIN_IDS
-from database import get_accounts, get_account, get_all_users, get_users_count
+from database import get_accounts, get_account, get_users_count, get_users_for_account, get_base_counts
 from keyboards import main_menu_kb, campaign_choose_account_kb, campaign_confirm_kb, campaign_running_kb
 import campaign
 
@@ -26,15 +26,19 @@ async def campaign_menu(call: CallbackQuery, state: FSMContext):
     count = await get_users_count()
     if count == 0:
         return await call.answer(
-            "⚠️ База пуста — сначала загрузите её («📥 Загрузить базу»).", show_alert=True,
+            "⚠️ База пуста — сначала загрузите её («👥 База контактов»).", show_alert=True,
         )
 
     if len(accounts) == 1:
-        await _show_confirm(call, accounts[0]["id"], count)
+        await _show_confirm(call, accounts[0]["id"])
     else:
+        base_counts = await get_base_counts()
         await call.message.edit_text(
-            f"📨 <b>Рассылка</b>\n\nВ базе {count} контактов. С какого аккаунта начнём?",
-            parse_mode="HTML", reply_markup=campaign_choose_account_kb(accounts),
+            f"📨 <b>Рассылка</b>\n\nВ базе {count} контактов. С какого аккаунта начнём?\n\n"
+            f"<i>Число рядом с аккаунтом — сколько контактов ему назначено (в «👥 База "
+            f"контактов» можно распределить или задать вручную).</i>",
+            parse_mode="HTML",
+            reply_markup=campaign_choose_account_kb(accounts, base_counts["by_account"]),
         )
 
 
@@ -43,22 +47,30 @@ async def campaign_pick_account(call: CallbackQuery):
     if not is_admin(call.from_user.id):
         return await call.answer()
     account_id = int(call.data.split(":", 1)[1])
-    count = await get_users_count()
-    await _show_confirm(call, account_id, count)
+    await _show_confirm(call, account_id)
 
 
-async def _show_confirm(call: CallbackQuery, account_id: int, count: int):
+async def _show_confirm(call: CallbackQuery, account_id: int):
     if campaign.is_running(account_id):
         return await call.message.edit_text(
             "⚠️ У этого аккаунта уже идёт рассылка.",
             reply_markup=campaign_running_kb(account_id),
+        )
+    usernames = await get_users_for_account(account_id)
+    if not usernames:
+        return await call.message.edit_text(
+            "⚠️ Этому аккаунту не назначено ни одного контакта.\n\n"
+            "Зайдите в «👥 База контактов» и распределите базу («🔀 Распределить между "
+            "всеми») или укажите контакты для этого аккаунта вручную "
+            "(«🎯 Указать контакты для аккаунта»).",
+            reply_markup=main_menu_kb(True),
         )
     account = await get_account(account_id)
     lo = account.get("campaign_interval_min_seconds", 300)
     hi = account.get("campaign_interval_max_seconds", 900)
     await call.message.edit_text(
         f"📨 <b>Подтверждение рассылки</b>\n\n"
-        f"Контактов в базе: {count}\n"
+        f"Назначено этому аккаунту: {len(usernames)}\n"
         f"Интервал между стартом новых диалогов: {lo}-{hi} сек "
         f"(меняется в «Аккаунты → Настройки → Интервал рассылки»)\n\n"
         f"Стиль и цель общения берутся из инструкций аккаунта. Ответы будут отправляться "
@@ -74,7 +86,9 @@ async def campaign_confirm_start(call: CallbackQuery):
     if not is_admin(call.from_user.id):
         return await call.answer()
     account_id = int(call.data.split(":", 1)[1])
-    usernames = await get_all_users()
+    usernames = await get_users_for_account(account_id)
+    if not usernames:
+        return await call.answer("Этому аккаунту не назначено контактов", show_alert=True)
     ok = campaign.start_campaign(account_id, usernames)
     if not ok:
         return await call.message.edit_text(

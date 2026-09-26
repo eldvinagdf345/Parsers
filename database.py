@@ -40,6 +40,12 @@ _CONTACT_COLUMNS = [
     ("bucket", "TEXT DEFAULT 'active'"),
 ]
 
+# NULL = still in the shared, unassigned pool; otherwise the id of the one
+# account allowed to draw this contact into a campaign.
+_PARSED_USER_COLUMNS = [
+    ("assigned_account_id", "INTEGER"),
+]
+
 
 async def _ensure_account_columns(db):
     cursor = await db.execute("PRAGMA table_info(accounts)")
@@ -57,15 +63,25 @@ async def _ensure_contact_columns(db):
             await db.execute(f"ALTER TABLE contacts ADD COLUMN {name} {decl}")
 
 
+async def _ensure_parsed_user_columns(db):
+    cursor = await db.execute("PRAGMA table_info(parsed_users)")
+    existing = {row[1] for row in await cursor.fetchall()}
+    for name, decl in _PARSED_USER_COLUMNS:
+        if name not in existing:
+            await db.execute(f"ALTER TABLE parsed_users ADD COLUMN {name} {decl}")
+
+
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("PRAGMA foreign_keys = ON")
         await db.execute("""
             CREATE TABLE IF NOT EXISTS parsed_users (
                 username TEXT PRIMARY KEY,
-                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                assigned_account_id INTEGER
             )
         """)
+        await _ensure_parsed_user_columns(db)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS accounts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -166,6 +182,81 @@ async def remove_user(identifier: str):
         await db.commit()
 
 
+# ── распределение базы между аккаунтами ─────────────────────────────────────
+
+async def get_base_counts() -> dict:
+    """{'unassigned': N, 'by_account': {account_id: N, ...}}"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT assigned_account_id, COUNT(*) FROM parsed_users GROUP BY assigned_account_id"
+        )
+        rows = await cursor.fetchall()
+    result = {"unassigned": 0, "by_account": {}}
+    for account_id, count in rows:
+        if account_id is None:
+            result["unassigned"] = count
+        else:
+            result["by_account"][account_id] = count
+    return result
+
+
+async def get_users_for_account(account_id: int) -> list:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT username FROM parsed_users WHERE assigned_account_id=? ORDER BY added_at DESC",
+            (account_id,),
+        )
+        rows = await cursor.fetchall()
+    return [r[0] for r in rows]
+
+
+async def get_unassigned_users() -> list:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT username FROM parsed_users WHERE assigned_account_id IS NULL ORDER BY added_at DESC"
+        )
+        rows = await cursor.fetchall()
+    return [r[0] for r in rows]
+
+
+async def assign_users_to_account(usernames: list, account_id: int) -> list:
+    """Adds each identifier to the base if new, and (re)assigns it to this
+    account specifically. This takes priority over the even split — such
+    contacts are never touched by distribute_unassigned_evenly."""
+    touched = []
+    async with aiosqlite.connect(DB_PATH) as db:
+        for username in usernames:
+            username = username.lower().strip()
+            if not username:
+                continue
+            await db.execute("""
+                INSERT INTO parsed_users (username, assigned_account_id) VALUES (?, ?)
+                ON CONFLICT(username) DO UPDATE SET assigned_account_id=excluded.assigned_account_id
+            """, (username, account_id))
+            touched.append(username)
+        await db.commit()
+    return touched
+
+
+async def distribute_unassigned_evenly(account_ids: list) -> dict:
+    """Round-robins every currently-unassigned base contact across the given
+    accounts. Contacts already assigned to a specific account (manually, or
+    by an earlier distribution) are left untouched. Returns {account_id: N}."""
+    counts = {aid: 0 for aid in account_ids}
+    if not account_ids:
+        return counts
+    usernames = await get_unassigned_users()
+    async with aiosqlite.connect(DB_PATH) as db:
+        for i, username in enumerate(usernames):
+            account_id = account_ids[i % len(account_ids)]
+            await db.execute(
+                "UPDATE parsed_users SET assigned_account_id=? WHERE username=?", (account_id, username)
+            )
+            counts[account_id] += 1
+        await db.commit()
+    return counts
+
+
 async def get_users_count() -> int:
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute("SELECT COUNT(*) FROM parsed_users")
@@ -211,6 +302,9 @@ async def set_account_connected(account_id: int, connected: bool):
 async def delete_account(account_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("PRAGMA foreign_keys = ON")
+        await db.execute(
+            "UPDATE parsed_users SET assigned_account_id=NULL WHERE assigned_account_id=?", (account_id,)
+        )
         await db.execute("DELETE FROM accounts WHERE id=?", (account_id,))
         await db.commit()
 

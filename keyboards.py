@@ -11,11 +11,15 @@ def main_menu_kb(has_accounts: bool) -> InlineKeyboardMarkup:
     ])
 
 
-def base_menu_kb(count: int) -> InlineKeyboardMarkup:
+def base_menu_kb(count: int, has_accounts: bool = False) -> InlineKeyboardMarkup:
     buttons = []
     if count > 0:
         buttons.append([InlineKeyboardButton(text="👁 Показать базу", callback_data="base_show")])
     buttons.append([InlineKeyboardButton(text="➕ Добавить контакты", callback_data="base_add")])
+    if has_accounts and count > 0:
+        buttons.append([InlineKeyboardButton(text="🔀 Распределить между всеми", callback_data="base_distribute")])
+    if has_accounts:
+        buttons.append([InlineKeyboardButton(text="🎯 Указать контакты для аккаунта", callback_data="base_assign_start")])
     if count > 0:
         buttons.append([InlineKeyboardButton(text="🧹 Очистить базу", callback_data="base_clear")])
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="back_main")])
@@ -27,6 +31,22 @@ def base_clear_confirm_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="⚠️ Да, очистить", callback_data="base_clear_yes")],
         [InlineKeyboardButton(text="◀️ Отмена", callback_data="base_menu")],
     ])
+
+
+def base_distribute_confirm_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Да, распределить", callback_data="base_distribute_yes")],
+        [InlineKeyboardButton(text="◀️ Отмена", callback_data="base_menu")],
+    ])
+
+
+def base_assign_choose_account_kb(accounts: list[dict]) -> InlineKeyboardMarkup:
+    buttons = [
+        [InlineKeyboardButton(text=f"{a['label']} ({a['phone']})", callback_data=f"base_assign_acc:{a['id']}")]
+        for a in accounts
+    ]
+    buttons.append([InlineKeyboardButton(text="◀️ Отмена", callback_data="base_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def auth_method_kb() -> InlineKeyboardMarkup:
@@ -306,9 +326,13 @@ def draft_approval_kb(message_id: int) -> InlineKeyboardMarkup:
 
 # ── рассылка ──────────────────────────────────────────────────────────────────
 
-def campaign_choose_account_kb(accounts: list[dict]) -> InlineKeyboardMarkup:
+def campaign_choose_account_kb(accounts: list[dict], counts: dict | None = None) -> InlineKeyboardMarkup:
+    counts = counts or {}
     buttons = [
-        [InlineKeyboardButton(text=f"{a['label']} ({a['phone']})", callback_data=f"camp_acc:{a['id']}")]
+        [InlineKeyboardButton(
+            text=f"{a['label']} ({a['phone']}) — {counts.get(a['id'], 0)} контактов",
+            callback_data=f"camp_acc:{a['id']}",
+        )]
         for a in accounts
     ]
     buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="back_main")])

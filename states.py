@@ -48,3 +48,9 @@ class AccountLinkStates(StatesGroup):
     """Multi-select mode for linking several accounts into one group that
     shares (and keeps in sync) a single instructions document."""
     selecting = State()
+
+
+class BaseAssignStates(StatesGroup):
+    """Assigning specific base contacts to one chosen account — the account
+    id is kept in FSM data under 'assign_account_id'."""
+    waiting_contacts = State()
