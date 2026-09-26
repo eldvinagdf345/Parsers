@@ -16,7 +16,7 @@ from utils import normalize_identifier, resolve_target
 
 app = FastAPI(title="Multiplex")
 
-INDEX_FILE = Path(__file__).parent / "web_index.html"
+INDEX_FILE = Path(__file__).parent / "index.html"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -651,5 +651,5 @@ async def ws_events(websocket: WebSocket):
 @app.get("/")
 async def index():
     if not INDEX_FILE.exists():
-        raise HTTPException(500, "web_index.html не найден рядом с webapp.py")
+        raise HTTPException(500, "index.html не найден рядом с webapp.py")
     return FileResponse(INDEX_FILE)
